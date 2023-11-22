@@ -25,7 +25,7 @@ const PairSessionsColumn = {
     TeamMembers: 'Team members',
     Projects: 'Projects',
     Date: 'Date',
-    Select: 'Select',
+    Status: 'Status',
 };
 
 /**
@@ -165,7 +165,7 @@ const addPairSession = async (pair: Pair<TeamMember>): Promise<CreatePageRespons
                     { id: pair[1].id },
                 ],
             },
-            [PairSessionsColumn.Select]: {
+            [PairSessionsColumn.Status]: {
                 type: 'select',
                 select: {
                     name: 'Planned',

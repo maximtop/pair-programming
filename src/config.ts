@@ -1,14 +1,14 @@
 // Team members table id
-export const TEAM_MEMBERS_TABLE_ID = '4967d568cd814dfbb84a479fc20b3d6e';
+export const TEAM_MEMBERS_TABLE_ID = '13cb7202886b4861b2198dc7b4af202f';
 
 // Vacations table id
-export const VACATIONS_TABLE_ID = '9cd9a784f2244202b1fa7f9c3d185fa4';
+export const VACATIONS_TABLE_ID = '5f9b20fa26104d13bbe5eb38594a1f5d';
 
 // Pair sessions table id
-export const PAIR_SESSIONS_TABLE_ID = 'd9f97d0bf4ba433bbba701ff4f90c69b';
+export const PAIR_SESSIONS_TABLE_ID = '4019b42eb2a94f33bb637ce5bf5a3ebd';
 
 // TODO suggest what project to work on based on the previous pair sessions
-export const PROJECTS_TABLE_ID = '0dc9c431823843818284a62001ba8bd8';
+export const PROJECTS_TABLE_ID = '09ec81ba05ac4c48882c48989bb66294';
 
 // Slack channel id to post messages to
 export const SLACK_CHANNEL = '#extensions-pair-programming';
