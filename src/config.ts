@@ -11,4 +11,4 @@ export const PAIR_SESSIONS_TABLE_ID = '4019b42eb2a94f33bb637ce5bf5a3ebd';
 export const PROJECTS_TABLE_ID = '09ec81ba05ac4c48882c48989bb66294';
 
 // Slack channel id to post messages to
-export const SLACK_CHANNEL = '#extensions-pair-programming';
+export const SLACK_CHANNEL = '#stand-up-extension';
