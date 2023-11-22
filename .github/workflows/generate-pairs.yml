@@ -3,6 +3,7 @@ name: Generate pairs
 on:
   schedule:
     - cron: '0 6 * * 1' # 9:00 AM UTC+3 on Mondays
+  workflow_dispatch:
 
 jobs:
   run-yarn-start:
