@@ -1,8 +1,8 @@
 import { Client, collectPaginatedAPI } from '@notionhq/client';
 import { CreatePageResponse, PageObjectResponse } from '@notionhq/client/build/src/api-endpoints';
 
-import { TeamMember } from './types';
 import { PAIR_SESSIONS_TABLE_ID, TEAM_MEMBERS_TABLE_ID, VACATIONS_TABLE_ID } from './config';
+import { TeamMember } from './types';
 
 import 'dotenv/config';
 
