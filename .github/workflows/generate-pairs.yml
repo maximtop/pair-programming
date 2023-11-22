@@ -1,0 +1,26 @@
+name: Generate pairs
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # 9:00 AM UTC+3 on Mondays
+
+jobs:
+  run-yarn-start:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: yarn install
+        env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
+
+      - name: Run yarn start
+        run: yarn start
