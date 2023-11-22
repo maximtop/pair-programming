@@ -6,7 +6,8 @@
   "license": "MIT",
   "scripts": {
     "start": "npx ts-node -r @swc/register index.ts",
-    "lint": "eslint . && tsc --noEmit"
+    "lint": "eslint . && tsc --noEmit",
+    "test": "jest"
   },
   "dependencies": {
     "@notionhq/client": "^2.2.13",
