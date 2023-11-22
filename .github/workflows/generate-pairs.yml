@@ -19,9 +19,9 @@ jobs:
 
       - name: Install dependencies
         run: yarn install
-        env:
-          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
-          SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
 
       - name: Run yarn start
         run: yarn start
+        env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
