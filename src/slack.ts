@@ -8,10 +8,10 @@ import 'dotenv/config';
 const web = new WebClient(process.env.SLACK_TOKEN);
 
 /**
- * Builds a message to publish to Slack
+ * Builds a rich message to publish to Slack
  * @param pairs
  */
-const buildMessage = (pairs: Pair<TeamMember>[]): Block[] => {
+const buildRichMessage = (pairs: Pair<TeamMember>[]): Block[] => {
     let blocks = [
         {
             type: 'section',
@@ -50,14 +50,30 @@ const buildMessage = (pairs: Pair<TeamMember>[]): Block[] => {
 };
 
 /**
+ * Builds a simple message to publish to Slack
+ * @param pairs
+ */
+export const buildSimpleMessage = (pairs: Pair<TeamMember>[]): string => {
+    const result = ['Current week pairs:'];
+    pairs.forEach((pair, idx) => {
+        const pairText = `${idx + 1}. ${pair[0].name} & ${pair[1].name}`
+        result.push(pairText);
+    });
+    result.push('cc @extensions');
+    return result.join('\n');
+};
+
+/**
  * Publishes a message to Slack
  * @param pairs
  */
 export const publishToSlack = async (pairs: Pair<TeamMember>[]): Promise<void> => {
-    const blocks = buildMessage(pairs);
+    const richMessage = buildRichMessage(pairs);
+    const simpleMessage = buildSimpleMessage(pairs);
+
     await web.chat.postMessage({
         channel: SLACK_CHANNEL,
-        text: 'just should be',
-        blocks,
+        text: simpleMessage,
+        blocks: richMessage,
     });
 };
