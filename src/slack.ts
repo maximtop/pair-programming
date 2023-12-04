@@ -56,7 +56,7 @@ const buildRichMessage = (pairs: Pair<TeamMember>[]): Block[] => {
 export const buildSimpleMessage = (pairs: Pair<TeamMember>[]): string => {
     const result = ['Current week pairs:'];
     pairs.forEach((pair, idx) => {
-        const pairText = `${idx + 1}. ${pair[0].name} & ${pair[1].name}`
+        const pairText = `${idx + 1}. ${pair[0].name} & ${pair[1].name}`;
         result.push(pairText);
     });
     result.push('cc @extensions');

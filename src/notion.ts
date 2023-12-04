@@ -1,5 +1,6 @@
 import { Client, collectPaginatedAPI } from '@notionhq/client';
 import { CreatePageResponse, PageObjectResponse } from '@notionhq/client/build/src/api-endpoints';
+import { format } from 'date-fns';
 
 import { PAIR_SESSIONS_TABLE_ID, TEAM_MEMBERS_TABLE_ID, VACATIONS_TABLE_ID } from './config';
 import { TeamMember } from './types';
@@ -152,10 +153,13 @@ const getPreviousPairSessions = async (): Promise<PairSession[]> => {
 };
 
 /**
- * Adds a new pair session to the Notion table.
+ * Adds a pair session
  * @param pair
  */
 const addPairSession = async (pair: Pair<TeamMember>): Promise<CreatePageResponse> => {
+    const today = new Date();
+    const dateString = format(today, 'yyyy-MM-dd'); // Format the date to 'YYYY-MM-DD'
+
     const response = await notion.pages.create({
         parent: { database_id: PAIR_SESSIONS_TABLE_ID },
         properties: {
@@ -169,6 +173,12 @@ const addPairSession = async (pair: Pair<TeamMember>): Promise<CreatePageRespons
                 type: 'select',
                 select: {
                     name: 'Planned',
+                },
+            },
+            [PairSessionsColumn.Date]: {
+                type: 'date',
+                date: {
+                    start: dateString, // Use formatted date string here
                 },
             },
         },

@@ -8,7 +8,8 @@ describe('slack', () => {
                 [{ name: 'Max', id: '', slack: '' }, { name: 'Bob', id: '', slack: '' }],
                 [{ name: 'John', id: '', slack: '' }, { name: 'Alice', id: '', slack: '' }],
             ];
-            expect(buildSimpleMessage(pairs)).toBe(`Current week pairs:\n1. Max & Bob\n2. John & Alice\ncc @extensions`);
-        })
+            expect(buildSimpleMessage(pairs))
+                .toBe('Current week pairs:\n1. Max & Bob\n2. John & Alice\ncc @extensions');
+        });
     });
 });
