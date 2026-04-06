@@ -6,15 +6,16 @@ This project is a small Node.js automation script that runs locally or in GitHub
 
 Required tools:
 
-- Node.js `18.x` to match CI and GitHub Actions workflows
+- Node.js `24.x` to match CI and GitHub Actions workflows
 - Yarn Classic `1.x` (`1.22.5` is installed in this workspace)
 - A Notion integration token with access to the configured databases
 - A Slack token that can post to the configured channel
 
 Version notes:
 
-- GitHub Actions uses Node.js `18` in the repository workflows.
+- GitHub Actions uses Node.js `24` in the repository workflows.
 - In this workspace, `yarn lint` and `yarn test` were verified successfully on Node.js `24.14.0`.
+- GitHub-hosted runners are migrating JavaScript actions from Node 20 to Node 24. This repository now runs both workflow action dependencies and repository commands on Node.js `24` in GitHub Actions.
 
 Repository documents:
 
@@ -118,6 +119,27 @@ What is verifiable from the repo today:
 - CI runs `yarn lint` and `yarn test` in GitHub Actions.
 - The lint and test workflows are configured on pushes to `master` and via manual dispatch.
 - Before opening or updating a pull request, you should have local `yarn lint` and `yarn test` results that match CI expectations.
+
+### GitHub Actions Node 24 configuration
+
+The repository workflows are configured to use Node.js `24` directly in GitHub Actions.
+
+Current workflow action versions:
+
+- The repository uses `actions/checkout@v5` and `actions/setup-node@v5` in its workflow files.
+- Those majors were selected as stable Node 24-compatible action releases.
+
+Temporary fallback guidance:
+
+- If GitHub has already switched JavaScript actions to Node 24 by default and a workflow is unexpectedly blocked, you may temporarily use `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true` as an emergency fallback.
+- Treat that fallback as short-lived operational mitigation only while finishing the permanent migration or investigating an external compatibility issue.
+- Do not leave that fallback enabled by default in repository workflows.
+- Once GitHub removes Node 20 from runners, the fallback is no longer available.
+
+Operational caution:
+
+- Manual validation of [generate-pairs.yml](.github/workflows/generate-pairs.yml) runs `yarn start` and performs live writes to Notion and Slack.
+- Validate that workflow only when you are prepared for those external side effects.
 
 ### Code style and tooling
 

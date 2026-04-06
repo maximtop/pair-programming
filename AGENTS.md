@@ -8,7 +8,7 @@ The codebase is a small TypeScript CLI-style automation project intended to run 
 
 ## Technical Context
 
-- Language/Version: TypeScript `^5.3.2`; CI runs on Node.js `18`; local execution uses `ts-node` with SWC.
+- Language/Version: TypeScript `^5.3.2`; CI runs on Node.js `24`; local execution uses `ts-node` with SWC.
 - Primary Dependencies: `@notionhq/client`, `@slack/web-api`, `date-fns`, `dotenv`.
 - Tooling: Jest `^29`, `@swc/jest`, ESLint with `@typescript-eslint`, `tsc --noEmit`.
 - Storage: Notion databases accessed through the Notion API. There is no local database or persisted application state in the repo.
@@ -62,7 +62,7 @@ yarn test __test__/notion.test.ts
 Notes:
 
 - There is no dedicated production build script. The project executes directly with `ts-node -r @swc/register`.
-- CI uses Yarn, Node.js 18, `yarn lint`, and `yarn test` in `.github/workflows/`.
+- CI uses Yarn, Node.js 24, `yarn lint`, and `yarn test` in `.github/workflows/`.
 
 ## Contribution Instructions
 
@@ -101,5 +101,5 @@ Notes:
 ### Other
 
 - Treat `dev.env` as the example configuration source; do not document or commit real credentials.
-- Preserve Node 18 compatibility because the GitHub Actions workflows pin that runtime.
+- Preserve Node 24 compatibility because the GitHub Actions workflows pin that runtime.
 - Keep this repository optimized for maintainability as a small automation project; avoid introducing unnecessary framework or build complexity.
