@@ -2,7 +2,8 @@ name: Generate pairs
 
 on:
   schedule:
-    - cron: '0 6 * * 1' # 9:00 AM UTC+3 on Mondays
+    - cron: '5 7 * * 1'
+      timezone: 'Europe/Nicosia'
   workflow_dispatch:
 
 jobs:
