@@ -1,4 +1,45 @@
-import { buildAllPossiblePairs, generatePairProgrammingSessions } from '../src/notion';
+import {
+    buildAllPossiblePairs,
+    generatePairProgrammingSessions,
+    isRetryableNotionError,
+    withNotionRetry,
+} from '../src/notion';
+
+describe('isRetryableNotionError', () => {
+    it('matches transient stream and network errors', () => {
+        expect(isRetryableNotionError({ code: 'ERR_STREAM_PREMATURE_CLOSE' })).toBe(true);
+        expect(isRetryableNotionError({ message: 'Premature close' })).toBe(true);
+        expect(isRetryableNotionError({ code: 'ECONNRESET' })).toBe(true);
+    });
+
+    it('matches rate limit and server errors', () => {
+        expect(isRetryableNotionError({ status: 429 })).toBe(true);
+        expect(isRetryableNotionError({ status: 500 })).toBe(true);
+        expect(isRetryableNotionError({ status: 400 })).toBe(false);
+    });
+});
+
+describe('withNotionRetry', () => {
+    it('retries retryable failures before resolving', async () => {
+        const operation = jest.fn()
+            .mockRejectedValueOnce({ code: 'ERR_STREAM_PREMATURE_CLOSE' })
+            .mockResolvedValue('ok');
+        const sleep = jest.fn().mockResolvedValue(undefined);
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+        try {
+            await expect(withNotionRetry(operation, 'Query team members', {
+                getDelayMs: () => 0,
+                sleep,
+            })).resolves.toBe('ok');
+        } finally {
+            warnSpy.mockRestore();
+        }
+
+        expect(operation).toHaveBeenCalledTimes(2);
+        expect(sleep).toHaveBeenCalledWith(0);
+    });
+});
 
 describe('buildAllPossiblePairs', () => {
     it('builds pairs', () => {

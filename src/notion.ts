@@ -1,5 +1,10 @@
 import { Client, collectPaginatedAPI } from '@notionhq/client';
-import { CreatePageResponse, PageObjectResponse } from '@notionhq/client/build/src/api-endpoints';
+import type {
+    CreatePageResponse,
+    PageObjectResponse,
+    QueryDatabaseParameters,
+    QueryDatabaseResponse,
+} from '@notionhq/client/build/src/api-endpoints';
 import { format } from 'date-fns';
 
 import { PAIR_SESSIONS_TABLE_ID, TEAM_MEMBERS_TABLE_ID, VACATIONS_TABLE_ID } from './config';
@@ -7,10 +12,132 @@ import { TeamMember } from './types';
 
 import 'dotenv/config';
 
+const notionFetch = typeof fetch === 'function'
+    ? async (
+        url: string,
+        init?: { body?: string, headers?: Record<string, string>, method?: string },
+    ): Promise<Response> => fetch(url, {
+        body: init?.body,
+        headers: init?.headers,
+        method: init?.method,
+    })
+    : undefined;
+
 // Initializing a client
 const notion = new Client({
     auth: process.env.NOTION_API_KEY, // or your API key as a string
+    fetch: notionFetch,
 });
+
+const NOTION_QUERY_ATTEMPTS = 4;
+const NOTION_QUERY_RETRY_DELAY_MS = 1000;
+
+const RETRYABLE_NOTION_ERROR_CODES = new Set([
+    'ERR_STREAM_PREMATURE_CLOSE',
+    'ECONNRESET',
+    'ETIMEDOUT',
+    'EAI_AGAIN',
+    'UND_ERR_SOCKET',
+]);
+
+interface ErrorWithDetails {
+    code?: string,
+    message?: string,
+    status?: number,
+}
+
+interface NotionRetryOptions {
+    attempts?: number,
+    getDelayMs?: (attempt: number) => number,
+    sleep?: (delayMs: number) => Promise<void>,
+}
+
+const sleep = async (delayMs: number): Promise<void> => new Promise((resolve) => {
+    setTimeout(resolve, delayMs);
+});
+
+const getNotionRetryDelayMs = (attempt: number): number => NOTION_QUERY_RETRY_DELAY_MS * (2 ** (attempt - 1));
+
+const getNotionErrorDetails = (error: unknown): ErrorWithDetails => {
+    if (!error || typeof error !== 'object') {
+        return {};
+    }
+
+    return error as ErrorWithDetails;
+};
+
+const getNotionErrorSummary = (error: unknown): string => {
+    const errorDetails = getNotionErrorDetails(error);
+
+    if (errorDetails.code) {
+        return errorDetails.code;
+    }
+
+    if (errorDetails.status) {
+        return `HTTP ${errorDetails.status}`;
+    }
+
+    if (errorDetails.message) {
+        return errorDetails.message;
+    }
+
+    return 'unknown error';
+};
+
+export const isRetryableNotionError = (error: unknown): boolean => {
+    const errorDetails = getNotionErrorDetails(error);
+
+    if (errorDetails.code && RETRYABLE_NOTION_ERROR_CODES.has(errorDetails.code)) {
+        return true;
+    }
+
+    if (errorDetails.status && (errorDetails.status === 429 || errorDetails.status >= 500)) {
+        return true;
+    }
+
+    return errorDetails.message?.includes('Premature close') ?? false;
+};
+
+export const withNotionRetry = async <T>(
+    operation: () => Promise<T>,
+    label: string,
+    options: NotionRetryOptions = {},
+): Promise<T> => {
+    const attempts = options.attempts ?? NOTION_QUERY_ATTEMPTS;
+    const getDelayMs = options.getDelayMs ?? getNotionRetryDelayMs;
+    const sleepFn = options.sleep ?? sleep;
+
+    const run = async (attempt: number): Promise<T> => {
+        try {
+            return await operation();
+        } catch (error) {
+            if (attempt >= attempts || !isRetryableNotionError(error)) {
+                throw error;
+            }
+
+            const delayMs = getDelayMs(attempt);
+
+            // eslint-disable-next-line no-console
+            console.warn(
+                `${label} failed with ${getNotionErrorSummary(error)} `
+                + `(attempt ${attempt}/${attempts}). Retrying in ${delayMs}ms.`,
+            );
+
+            await sleepFn(delayMs);
+            return run(attempt + 1);
+        }
+    };
+
+    return run(1);
+};
+
+const queryDatabase = async (
+    parameters: QueryDatabaseParameters,
+    label: string,
+): Promise<QueryDatabaseResponse['results']> => withNotionRetry(
+    () => collectPaginatedAPI(notion.databases.query, parameters),
+    label,
+);
 
 const TeamMembersColumn = {
     Name: 'Name',
@@ -49,9 +176,9 @@ function isRichTextProperty(property: any): property is { rich_text: { plain_tex
  * Returns all team members
  */
 const getTeamMembers = async (): Promise<TeamMember[]> => {
-    const blocks = await collectPaginatedAPI(notion.databases.query, {
+    const blocks = await queryDatabase({
         database_id: TEAM_MEMBERS_TABLE_ID,
-    });
+    }, 'Query team members');
 
     return blocks
         .filter((block): block is PageObjectResponse => block.object === 'page')
@@ -81,7 +208,7 @@ interface Vacation {
  * Returns vacations for the next week
  */
 const getVacations = async (): Promise<Vacation[]> => {
-    const blocks = await collectPaginatedAPI(notion.databases.query, {
+    const blocks = await queryDatabase({
         database_id: VACATIONS_TABLE_ID,
         filter: {
             property: 'Date',
@@ -90,7 +217,7 @@ const getVacations = async (): Promise<Vacation[]> => {
                 before: new Date(new Date().setDate(new Date().getDate() + 7)).toISOString(),
             },
         },
-    });
+    }, 'Query vacations');
 
     return blocks
         .filter((block: any): block is PageObjectResponse => block.object === 'page')
@@ -128,7 +255,7 @@ interface PairSession {
  * Returns all previous sessions until the current date
  */
 const getPreviousPairSessions = async (): Promise<PairSession[]> => {
-    const blocks = await collectPaginatedAPI(notion.databases.query, {
+    const blocks = await queryDatabase({
         database_id: PAIR_SESSIONS_TABLE_ID,
         filter: {
             property: 'Date',
@@ -136,7 +263,7 @@ const getPreviousPairSessions = async (): Promise<PairSession[]> => {
                 before: new Date().toISOString(),
             },
         },
-    });
+    }, 'Query previous pair sessions');
 
     return blocks.map((block: any) => {
         const memberIds = block.properties[PairSessionsColumn.TeamMembers].relation.map((member: any) => member);
