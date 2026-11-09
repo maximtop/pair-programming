@@ -1,5 +1,6 @@
 import {
     buildAllPossiblePairs,
+    buildVacationsFilter,
     generatePairProgrammingSessions,
     isRetryableNotionError,
     withNotionRetry,
@@ -128,6 +129,19 @@ describe('generatePairProgrammingSessions', () => {
                     .join(':'));
 
             expect(previousSessionKeys).not.toContain(pairKey);
+        });
+    });
+});
+
+describe('buildVacationsFilter', () => {
+    it('puts each date bound in its own filter inside and', () => {
+        const now = new Date('2026-11-09T10:00:00.000Z');
+
+        expect(buildVacationsFilter(now)).toEqual({
+            and: [
+                { property: 'Date', date: { after: '2026-11-09T10:00:00.000Z' } },
+                { property: 'Date', date: { before: '2026-11-16T10:00:00.000Z' } },
+            ],
         });
     });
 });

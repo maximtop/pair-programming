@@ -5,7 +5,7 @@ import type {
     QueryDatabaseParameters,
     QueryDatabaseResponse,
 } from '@notionhq/client/build/src/api-endpoints';
-import { format } from 'date-fns';
+import { addDays, format } from 'date-fns';
 
 import { PAIR_SESSIONS_TABLE_ID, TEAM_MEMBERS_TABLE_ID, VACATIONS_TABLE_ID } from './config';
 import { TeamMember } from './types';
@@ -204,19 +204,32 @@ interface Vacation {
     end: string,
 }
 
+const VACATIONS_LOOKAHEAD_DAYS = 7;
+
+/**
+ * Builds the filter for vacations between `now` and a week later.
+ * Notion accepts one operator per date condition, so each bound is its own filter inside `and`.
+ */
+export const buildVacationsFilter = (now: Date): QueryDatabaseParameters['filter'] => ({
+    and: [
+        {
+            property: 'Date',
+            date: { after: now.toISOString() },
+        },
+        {
+            property: 'Date',
+            date: { before: addDays(now, VACATIONS_LOOKAHEAD_DAYS).toISOString() },
+        },
+    ],
+});
+
 /**
  * Returns vacations for the next week
  */
 const getVacations = async (): Promise<Vacation[]> => {
     const blocks = await queryDatabase({
         database_id: VACATIONS_TABLE_ID,
-        filter: {
-            property: 'Date',
-            date: {
-                after: new Date().toISOString(),
-                before: new Date(new Date().setDate(new Date().getDate() + 7)).toISOString(),
-            },
-        },
+        filter: buildVacationsFilter(new Date()),
     }, 'Query vacations');
 
     return blocks
