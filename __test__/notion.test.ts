@@ -2,6 +2,7 @@ import {
     buildAllPossiblePairs,
     buildVacationsFilter,
     generatePairProgrammingSessions,
+    getAvailableTeamMembers,
     isRetryableNotionError,
     withNotionRetry,
 } from '../src/notion';
@@ -158,6 +159,20 @@ describe('generatePairProgrammingSessions optimality', () => {
         return counts;
     };
 
+    const countSessions = (sessions: Session[]): Map<string, number> => {
+        const counts = new Map<string, number>();
+        sessions.flatMap((session) => session.members).forEach((member) => {
+            counts.set(member.id, (counts.get(member.id) ?? 0) + 1);
+        });
+        return counts;
+    };
+
+    const getSitOut = (pairs: [Member, Member][], members: Member[]): Member => {
+        const paired = new Set(pairs.flat());
+        const [sitOut] = members.filter((member) => !paired.has(member));
+        return sitOut;
+    };
+
     const scorePairs = (pairs: [Member, Member][], counts: Map<string, number>): number => pairs
         .reduce((sum, [a, b]) => sum + (counts.get(pairKey(a, b)) ?? 0), 0);
 
@@ -224,7 +239,73 @@ describe('generatePairProgrammingSessions optimality', () => {
             const pairs = generatePairProgrammingSessions(members, sessions);
 
             expectValidPairing(pairs, members);
-            expect(scorePairs(pairs, counts)).toBe(bruteForce(members, counts));
+            const minScore = bruteForce(members, counts);
+            expect(scorePairs(pairs, counts)).toBe(minScore);
+
+            if (memberCount % 2 === 1) {
+                // Among members whose sitting out allows the minimum score,
+                // the one with the most previous sessions sits out, then the smallest id
+                const sessionCounts = countSessions(sessions);
+                const [expectedSitOut] = members
+                    .filter((member) => bruteForceEven(members.filter((m) => m !== member), counts) === minScore)
+                    .sort((a, b) => (sessionCounts.get(b.id) ?? 0) - (sessionCounts.get(a.id) ?? 0)
+                        || (a.id < b.id ? -1 : 1));
+
+                expect(getSitOut(pairs, members)).toBe(expectedSitOut);
+            }
         }
+    });
+
+    it.each([5, 7, 9])('rotates who sits out among %i members while no pair repeats', (memberCount) => {
+        const members = createMembers(memberCount);
+        const sessions: Session[] = [];
+        const sitOuts: Member[] = [];
+
+        for (let week = 0; week < memberCount; week += 1) {
+            const pairs = generatePairProgrammingSessions(members, sessions);
+
+            expectValidPairing(pairs, members);
+            expect(scorePairs(pairs, countPairs(sessions))).toBe(0);
+            sitOuts.push(getSitOut(pairs, members));
+            pairs.forEach((pair) => sessions.push({ id: String(sessions.length), members: pair }));
+        }
+
+        expect(new Set(sitOuts).size).toBe(memberCount);
+    });
+});
+
+describe('getAvailableTeamMembers', () => {
+    const alice = { id: 'alice' };
+    const bob = { id: 'bob' };
+
+    // Monday 2026-11-09 07:05 in the local time zone
+    const mondayMorning = new Date(2026, 10, 9, 7, 5);
+
+    it.each([
+        ['single-day vacation today', '2026-11-09', null, false],
+        ['range ending today', '2026-11-02', '2026-11-09', false],
+        ['range starting today', '2026-11-09', '2026-11-13', false],
+        ['range that ended yesterday', '2026-11-02', '2026-11-08', true],
+        ['single-day vacation tomorrow', '2026-11-10', null, true],
+    ])('date-only %s', (_, start, end, available) => {
+        const vacations = [{
+            id: 'v1', memberId: 'alice', start, end,
+        }];
+
+        expect(getAvailableTeamMembers([alice, bob], vacations, mondayMorning))
+            .toEqual(available ? [alice, bob] : [bob]);
+    });
+
+    it.each([
+        ['covering now', '2026-11-09T00:00:00.000Z', '2026-11-09T12:00:00.000Z', false],
+        ['ended before now', '2026-11-08T09:00:00.000Z', '2026-11-09T05:00:00.000Z', true],
+        ['starting after now', '2026-11-09T08:05:00.000+02:00', '2026-11-09T18:00:00.000+02:00', true],
+    ])('datetime range %s', (_, start, end, available) => {
+        const vacations = [{
+            id: 'v1', memberId: 'alice', start, end,
+        }];
+
+        expect(getAvailableTeamMembers([alice, bob], vacations, new Date('2026-11-09T05:05:00.000Z')))
+            .toEqual(available ? [alice, bob] : [bob]);
     });
 });

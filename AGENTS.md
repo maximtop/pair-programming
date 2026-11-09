@@ -16,7 +16,7 @@ The codebase is a small TypeScript CLI-style automation project intended to run 
 - Target Platform: Node.js automation run locally and in GitHub Actions workflows.
 - Project Type: Single-package internal automation script.
 - Performance Goals: N/A; no explicit performance targets are documented.
-- Constraints: Requires `NOTION_API_KEY` and `SLACK_TOKEN`; Notion database IDs and the Slack channel ID are hard-coded in `src/config.ts`; the current pairing algorithm does not explicitly assign a leftover member when the available team size is odd.
+- Constraints: Requires `NOTION_API_KEY` and `SLACK_TOKEN`; Notion database IDs and the Slack channel ID are hard-coded in `src/config.ts`; when the available team size is odd, exactly one member sits out: among pairings with the lowest repeat score, the algorithm leaves out the member with the most past sessions (ties broken by the smaller id).
 - Scale/Scope: Small internal team workflow, not a general-purpose public service.
 
 ## Project Structure
@@ -72,7 +72,7 @@ Notes:
 - Verify that any new or changed code still follows the Code Guidelines section in this file before considering the task complete.
 - Keep command names and workflow behavior aligned with `.github/workflows/` when editing scripts, CI, or entrypoints.
 - Preserve the required environment-variable interface: use `NOTION_API_KEY` and `SLACK_TOKEN`, and never hard-code secret values in source files or documentation.
-- If you change pairing behavior, explicitly verify even-member and odd-member cases because the current implementation only guarantees full coverage for even team sizes.
+- If you change pairing behavior, you MUST verify both even-member and odd-member cases: the repeat score must stay minimal, and with an odd count the sit-out must rotate by past session count.
 
 ## Code Guidelines
 
