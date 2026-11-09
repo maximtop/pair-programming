@@ -368,66 +368,56 @@ function createPairsCountMap<
     }, new Map());
 }
 
-/**
- * Generates all possible unique pairs from the given array of members
- * @param members
- */
-function generateAllUniquePairs<T extends BaseTeamMember>(members: T[]): Pair<T>[] {
-    const pairs: Pair<T>[] = [];
-    for (let i = 0; i < members.length; i += 1) {
-        for (let j = i + 1; j < members.length; j += 1) {
-            pairs.push([members[i], members[j]]);
-        }
-    }
-    return pairs;
+interface PairingResult<T extends BaseTeamMember> {
+    pairs: Pair<T>[],
+    score: number,
 }
 
 /**
- * Finds optimal pairs using a dynamic programming approach with caching
- * @param remainingPairs
+ * Finds the pairing of `members` with the lowest total count of repeated pairs.
+ * With an odd number of members, one member stays unpaired.
+ *
+ * The best pairing of a set of members does not depend on how the other members were paired,
+ * so results are cached per set of remaining members.
+ * @param members
  * @param pairsCountMap
- * @param currentPairs
- * @param currentScore
- * @param dpCache
+ * @param cache
  */
-function findOptimalPairsWithCaching<T extends BaseTeamMember>(
-    remainingPairs: Pair<T>[],
+function findOptimalPairs<T extends BaseTeamMember>(
+    members: T[],
     pairsCountMap: Map<string, number>,
-    currentPairs: Pair<T>[] = [],
-    currentScore = 0,
-    dpCache = new Map(),
-): { pairs: Pair<T>[]; score: number } {
-    const cacheKey = remainingPairs.map((p) => createPairKey(p)).join('|');
-    if (dpCache.has(cacheKey)) {
-        return dpCache.get(cacheKey);
+    cache = new Map<string, PairingResult<T>>(),
+): PairingResult<T> {
+    if (members.length < 2) {
+        return { pairs: [], score: 0 };
     }
 
-    if (remainingPairs.length === 0) {
-        return { pairs: currentPairs, score: currentScore };
+    const cacheKey = members.map((m) => m.id).sort().join('|');
+    const cached = cache.get(cacheKey);
+    if (cached) {
+        return cached;
     }
 
-    // Initialize bestResult with a default valid object
-    let bestResult: { pairs: Pair<T>[]; score: number } = {
-        pairs: [],
-        score: Number.MAX_SAFE_INTEGER,
-    };
+    const [first, ...rest] = members;
 
-    for (const pair of remainingPairs) {
-        const key = createPairKey(pair);
-        const pairScore = pairsCountMap.get(key) || 0;
-        const newScore = currentScore + pairScore;
-        const newPairs = [...currentPairs, pair];
-        const filteredRemainingPairs = remainingPairs.filter((p) => !p.includes(pair[0]) && !p.includes(pair[1]));
+    // With an odd count, the first member may be the one who stays unpaired
+    let best: PairingResult<T> = members.length % 2 === 1
+        ? findOptimalPairs(rest, pairsCountMap, cache)
+        : { pairs: [], score: Number.POSITIVE_INFINITY };
 
-        const result = findOptimalPairsWithCaching(filteredRemainingPairs, pairsCountMap, newPairs, newScore, dpCache);
+    rest.forEach((partner, index) => {
+        const pair: Pair<T> = [first, partner];
+        const remaining = rest.filter((_, i) => i !== index);
+        const result = findOptimalPairs(remaining, pairsCountMap, cache);
+        const score = (pairsCountMap.get(createPairKey(pair)) || 0) + result.score;
 
-        if (result.score < bestResult.score) {
-            bestResult = result;
+        if (score < best.score) {
+            best = { pairs: [pair, ...result.pairs], score };
         }
-    }
+    });
 
-    dpCache.set(cacheKey, bestResult);
-    return bestResult;
+    cache.set(cacheKey, best);
+    return best;
 }
 
 /**
@@ -442,12 +432,7 @@ export const generatePairProgrammingSessions = <T extends BaseTeamMember, P exte
     // Create a map to count occurrences of each pair in previous sessions
     const pairsCountMap = createPairsCountMap<T, P>(previousSessions);
 
-    // Generate all possible unique pairs from available team members
-    const allPairs = generateAllUniquePairs(availableTeamMembers);
-
-    // Find optimal pairings using a dynamic programming approach with caching
-    const optimalPairsResult = findOptimalPairsWithCaching<T>(allPairs, pairsCountMap);
-    return optimalPairsResult.pairs;
+    return findOptimalPairs(availableTeamMembers, pairsCountMap).pairs;
 };
 
 /**

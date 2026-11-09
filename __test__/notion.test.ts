@@ -143,3 +143,88 @@ describe('buildVacationsFilter', () => {
         });
     });
 });
+
+describe('generatePairProgrammingSessions optimality', () => {
+    type Member = { id: string };
+    type Session = { id: string, members: Member[] };
+
+    const pairKey = (a: Member, b: Member): string => [a.id, b.id].sort().join(':');
+
+    const countPairs = (sessions: Session[]): Map<string, number> => {
+        const counts = new Map<string, number>();
+        sessions.forEach(({ members: [a, b] }) => {
+            counts.set(pairKey(a, b), (counts.get(pairKey(a, b)) ?? 0) + 1);
+        });
+        return counts;
+    };
+
+    const scorePairs = (pairs: [Member, Member][], counts: Map<string, number>): number => pairs
+        .reduce((sum, [a, b]) => sum + (counts.get(pairKey(a, b)) ?? 0), 0);
+
+    // Minimum score over all perfect matchings, by full enumeration
+    const bruteForceEven = (members: Member[], counts: Map<string, number>): number => {
+        if (members.length === 0) {
+            return 0;
+        }
+        const [first, ...rest] = members;
+        return Math.min(...rest.map((partner, index) => (counts.get(pairKey(first, partner)) ?? 0)
+            + bruteForceEven(rest.filter((_, i) => i !== index), counts)));
+    };
+
+    // For odd counts, also try every member as the one who sits out
+    const bruteForce = (members: Member[], counts: Map<string, number>): number => (members.length % 2 === 0
+        ? bruteForceEven(members, counts)
+        : Math.min(...members.map((_, out) => bruteForceEven(members.filter((__, i) => i !== out), counts))));
+
+    // Deterministic PRNG (mulberry32) so failures are reproducible
+    const createRandom = (seed: number): () => number => {
+        let state = seed;
+        return () => {
+            state = (state + 0x6D2B79F5) | 0;
+            let t = Math.imul(state ^ (state >>> 15), 1 | state);
+            t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+    };
+
+    const createMembers = (count: number): Member[] => Array.from({ length: count }, (_, i) => ({ id: `m${i}` }));
+
+    const expectValidPairing = (pairs: [Member, Member][], members: Member[]): void => {
+        const ids = pairs.flat().map((m) => m.id);
+        expect(new Set(ids).size).toBe(ids.length);
+        expect(pairs).toHaveLength(Math.floor(members.length / 2));
+    };
+
+    it('avoids a repeated pair that an earlier search path left behind', () => {
+        const [a, b, c, d, e, f] = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => ({ id }));
+        const sessions = [
+            { id: '1', members: [d, e] },
+            { id: '2', members: [d, f] },
+            { id: '3', members: [e, f] },
+        ];
+
+        const pairs = generatePairProgrammingSessions([a, b, c, d, e, f], sessions);
+
+        expectValidPairing(pairs, [a, b, c, d, e, f]);
+        expect(scorePairs(pairs, countPairs(sessions))).toBe(0);
+    });
+
+    it.each([4, 5, 6, 7, 8, 9, 10])('matches the brute-force minimum for %i members', (memberCount) => {
+        const random = createRandom(memberCount);
+        const members = createMembers(memberCount);
+
+        for (let run = 0; run < 30; run += 1) {
+            const sessions: Session[] = Array.from({ length: 25 }, (_, i) => {
+                const a = Math.floor(random() * memberCount);
+                const b = (a + 1 + Math.floor(random() * (memberCount - 1))) % memberCount;
+                return { id: String(i), members: [members[a], members[b]] };
+            });
+            const counts = countPairs(sessions);
+
+            const pairs = generatePairProgrammingSessions(members, sessions);
+
+            expectValidPairing(pairs, members);
+            expect(scorePairs(pairs, counts)).toBe(bruteForce(members, counts));
+        }
+    });
+});
