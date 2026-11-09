@@ -134,14 +134,12 @@ describe('generatePairProgrammingSessions', () => {
 });
 
 describe('buildVacationsFilter', () => {
-    it('puts each date bound in its own filter inside and', () => {
+    it('has only an upper bound so ongoing vacations are returned', () => {
         const now = new Date('2026-11-09T10:00:00.000Z');
 
         expect(buildVacationsFilter(now)).toEqual({
-            and: [
-                { property: 'Date', date: { after: '2026-11-09T10:00:00.000Z' } },
-                { property: 'Date', date: { before: '2026-11-16T10:00:00.000Z' } },
-            ],
+            property: 'Date',
+            date: { before: '2026-11-16T10:00:00.000Z' },
         });
     });
 });

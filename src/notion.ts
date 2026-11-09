@@ -142,6 +142,7 @@ const queryDatabase = async (
 const TeamMembersColumn = {
     Name: 'Name',
     Slack: 'Slack',
+    Enabled: 'Enabled',
 };
 
 const VacationsColumn = {
@@ -173,11 +174,15 @@ function isRichTextProperty(property: any): property is { rich_text: { plain_tex
 }
 
 /**
- * Returns all team members
+ * Returns team members marked as enabled
  */
 const getTeamMembers = async (): Promise<TeamMember[]> => {
     const blocks = await queryDatabase({
         database_id: TEAM_MEMBERS_TABLE_ID,
+        filter: {
+            property: TeamMembersColumn.Enabled,
+            checkbox: { equals: true },
+        },
     }, 'Query team members');
 
     return blocks
@@ -207,20 +212,13 @@ interface Vacation {
 const VACATIONS_LOOKAHEAD_DAYS = 7;
 
 /**
- * Builds the filter for vacations between `now` and a week later.
- * Notion accepts one operator per date condition, so each bound is its own filter inside `and`.
+ * Builds the filter for vacations that start before a week from `now`.
+ * There is deliberately no lower bound: ongoing vacations must be returned too.
+ * `getAvailableTeamMembers` picks the ones that cover the current date.
  */
 export const buildVacationsFilter = (now: Date): QueryDatabaseParameters['filter'] => ({
-    and: [
-        {
-            property: 'Date',
-            date: { after: now.toISOString() },
-        },
-        {
-            property: 'Date',
-            date: { before: addDays(now, VACATIONS_LOOKAHEAD_DAYS).toISOString() },
-        },
-    ],
+    property: 'Date',
+    date: { before: addDays(now, VACATIONS_LOOKAHEAD_DAYS).toISOString() },
 });
 
 /**
