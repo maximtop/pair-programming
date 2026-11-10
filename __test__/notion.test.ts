@@ -416,7 +416,7 @@ describe('getSessionWeight', () => {
         ['four weeks ago', '2026-10-12', 500],
         ['eight weeks ago', '2026-09-14', 250],
         ['a year ago', '2025-11-10', 0],
-        ['four weeks ago, with a time', '2026-10-12T12:00:00.000Z', 500],
+        ['four weeks ago, with a local time', '2026-10-12T12:00:00', 500],
         ['in the future', '2026-11-16', 1000],
     ])('weighs a session held %s', (_, date, weight) => {
         expect(getSessionWeight(date, now)).toBe(weight);
@@ -467,6 +467,24 @@ describe('buildPairingPlan', () => {
         expect(plan.unpaired).toHaveLength(1);
         expect(plan.pairs.flat()).not.toContain(plan.unpaired[0]);
         expect(plan.onVacation).toEqual([]);
+    });
+
+    it('leaves out the member with the largest weight of past sessions, not the most sessions', () => {
+        const plan = buildPairingPlan({
+            teamMembers: members,
+            vacations: [],
+            previousPairSessions: [
+                // `a` has two sessions, but nine months ago
+                { id: 'ac', members: [a, c], date: '2026-02-02' },
+                { id: 'ad', members: [a, d], date: '2026-02-02' },
+                // `b` and `e` have one session each, last week
+                { id: 'be', members: [b, e], date: '2026-11-02' },
+            ],
+            ignoredSessionIds: [],
+            now,
+        });
+
+        expect(plan.unpaired).toEqual([b]);
     });
 
     it('prefers the pairs that have not met for longest over the pairs that met least often', () => {

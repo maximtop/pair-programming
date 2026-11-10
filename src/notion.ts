@@ -488,7 +488,7 @@ interface PairingContext<T extends BaseTeamMember> {
  * Compares pairings: the lower repeat score wins.
  * On equal scores, the one whose sit-out member has the larger total weight of previous sessions wins,
  * then the one with the smaller id.
- * This rotates who sits out instead of leaving out the first member every week.
+ * On ties this spreads the sit-outs instead of leaving out the first member every week.
  * @param a
  * @param b
  * @param memberWeightsMap
@@ -516,7 +516,7 @@ function isBetterPairing<T extends BaseTeamMember>(
 }
 
 /**
- * Finds the pairing of `members` with the lowest total count of repeated pairs.
+ * Finds the pairing of `members` with the lowest total weight of the past sessions of its pairs.
  * With an odd number of members, one member stays unpaired; see `isBetterPairing` for how they are chosen.
  *
  * The best pairing of a set of members does not depend on how the other members were paired,
@@ -576,8 +576,8 @@ export const generatePairProgrammingSessions = <T extends BaseTeamMember, P exte
     availableTeamMembers: T[],
     previousSessions: P[],
 ): Pair<T>[] => findOptimalPairs(availableTeamMembers, {
-    pairWeightsMap: createPairWeightsMap<T, P>(previousSessions),
-    memberWeightsMap: createMemberWeightsMap<T, P>(previousSessions),
+    pairWeightsMap: createPairWeightsMap(previousSessions),
+    memberWeightsMap: createMemberWeightsMap(previousSessions),
     cache: new Map(),
 }).pairs;
 

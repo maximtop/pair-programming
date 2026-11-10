@@ -230,7 +230,7 @@ The current dependency set uses TypeScript `5.3.2`, while `@typescript-eslint/ty
 
 ### No pairs are created for one teammate
 
-This is expected when the number of available teammates is odd: exactly one person sits out. The algorithm first minimizes the repeat score, then, among equally good pairings, leaves out the teammate with the largest total weight of past sessions (ties broken by the smaller Notion page id). Recent sessions weigh more than old ones, so someone who sat out recently is paired first, and the sit-out rotates.
+This is expected when the number of available teammates is odd: exactly one person sits out. The algorithm first minimizes the repeat score, then, among equally good pairings, leaves out the teammate with the largest total weight of past sessions (ties broken by the smaller Notion page id). The repeat score comes first, so the same person can sit out several weeks in a row: for example, a teammate who has recently paired with everyone else sits out until those sessions fade.
 
 ### The run says pairs are already generated
 
