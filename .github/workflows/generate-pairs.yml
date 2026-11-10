@@ -11,6 +11,11 @@ on:
         type: boolean
         default: false
 
+# The rerun guard reads Notion before writing, so runs must not overlap
+concurrency:
+  group: generate-pairs
+  cancel-in-progress: false
+
 jobs:
   run-yarn-start:
     runs-on: ubuntu-latest
@@ -29,5 +34,7 @@ jobs:
       - name: Run yarn start
         run: yarn start ${{ inputs.dry_run && '--dry-run' || '' }}
         env:
+          # The week starts on Monday in the team's time zone, not in the runner's UTC
+          TZ: Europe/Nicosia
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}

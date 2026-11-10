@@ -7,6 +7,7 @@ import {
     buildVacationsFilter,
     generatePairProgrammingSessions,
     getAvailableTeamMembers,
+    getIdsCreatedBy,
     isRetryableNotionError,
     parseTeamMember,
     parseVacation,
@@ -387,10 +388,27 @@ describe('buildCurrentWeekSessionsFilter', () => {
     });
 });
 
+describe('getIdsCreatedBy', () => {
+    it('returns only the pages created by the given user', () => {
+        const pages = [
+            { id: 'generated-1', created_by: { object: 'user' as const, id: 'bot' } },
+            { id: 'added-by-hand', created_by: { object: 'user' as const, id: 'human' } },
+            { id: 'generated-2', created_by: { object: 'user' as const, id: 'bot' } },
+        ];
+
+        expect(getIdsCreatedBy(pages, 'bot')).toEqual(['generated-1', 'generated-2']);
+        expect(getIdsCreatedBy(pages, 'someone-else')).toEqual([]);
+    });
+});
+
 describe('buildPairingPlan', () => {
     const now = new Date(2026, 10, 9, 7, 5);
     const members = ['a', 'b', 'c', 'd', 'e'].map((id) => ({ id, name: id.toUpperCase(), slack: '' }));
     const [a, b, c, d, e] = members;
+
+    const getPairKeys = (pairs: { id: string }[][]): string[] => pairs
+        .map((pair) => pair.map((member) => member.id).sort().join('-'))
+        .sort();
 
     it('leaves out members on vacation and reports them', () => {
         const vacations = [{
@@ -400,7 +418,13 @@ describe('buildPairingPlan', () => {
             end: '2026-11-13',
         }];
 
-        const plan = buildPairingPlan(members, vacations, [], now);
+        const plan = buildPairingPlan({
+            teamMembers: members,
+            vacations,
+            previousPairSessions: [],
+            ignoredSessionIds: [],
+            now,
+        });
 
         expect(plan.pairs).toHaveLength(2);
         expect(plan.pairs.flat().map((member) => member.id).sort()).toEqual([a, b, c, d].map((member) => member.id));
@@ -409,11 +433,51 @@ describe('buildPairingPlan', () => {
     });
 
     it('reports the member left without a pair when the available count is odd', () => {
-        const plan = buildPairingPlan(members, [], [], now);
+        const plan = buildPairingPlan({
+            teamMembers: members,
+            vacations: [],
+            previousPairSessions: [],
+            ignoredSessionIds: [],
+            now,
+        });
 
         expect(plan.pairs).toHaveLength(2);
         expect(plan.unpaired).toHaveLength(1);
         expect(plan.pairs.flat()).not.toContain(plan.unpaired[0]);
         expect(plan.onVacation).toEqual([]);
+    });
+
+    describe('ignored sessions', () => {
+        const teamMembers = [a, b, c, d];
+        const previousPairSessions = [
+            { id: 'old-1', members: [a, c] },
+            { id: 'old-2', members: [a, d] },
+            { id: 'this-week-1', members: [a, b] },
+            { id: 'this-week-2', members: [c, d] },
+        ];
+
+        it('avoids the pairs of every session in the history', () => {
+            const plan = buildPairingPlan({
+                teamMembers,
+                vacations: [],
+                previousPairSessions,
+                ignoredSessionIds: [],
+                now,
+            });
+
+            expect(getPairKeys(plan.pairs)).not.toEqual(['a-b', 'c-d']);
+        });
+
+        it('leaves the ignored sessions out of the history', () => {
+            const plan = buildPairingPlan({
+                teamMembers,
+                vacations: [],
+                previousPairSessions,
+                ignoredSessionIds: ['this-week-1', 'this-week-2'],
+                now,
+            });
+
+            expect(getPairKeys(plan.pairs)).toEqual(['a-b', 'c-d']);
+        });
     });
 });

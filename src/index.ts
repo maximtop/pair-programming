@@ -1,4 +1,4 @@
-import { addPairSessions, countSessionsGeneratedThisWeek, getPairingPlan } from './notion';
+import { addPairSessions, getPairingPlan, getSessionIdsGeneratedThisWeek } from './notion';
 import { publishToSlack } from './slack';
 import { PairingPlan } from './types';
 
@@ -41,21 +41,31 @@ export const describePlan = (plan: PairingPlan): string => {
 
 export const main = async ({ dryRun }: RunOptions): Promise<void> => {
     const now = new Date();
-    const generatedCount = await countSessionsGeneratedThisWeek(now);
+    const generatedIds = await getSessionIdsGeneratedThisWeek(now);
 
-    if (generatedCount > 0 && !dryRun) {
-        log(`Pairs for this week are already generated (${generatedCount} sessions in Notion). Nothing to do.`);
+    if (generatedIds.length > 0 && !dryRun) {
+        log(`Pairs for this week are already generated (${generatedIds.length} sessions in Notion). Nothing to do.`);
+        log('If an earlier run failed half-way, or to regenerate the pairs, '
+            + 'move this week\'s generated sessions to the trash in Notion and run again.');
         return;
     }
 
-    const plan = await getPairingPlan(now);
+    // Only a dry run gets here with generated sessions. They are left out of the history:
+    // otherwise the search would avoid this week's own pairs and print a different plan.
+    const plan = await getPairingPlan(now, generatedIds);
     log(describePlan(plan));
 
     if (dryRun) {
         log('Dry run: nothing is written to Notion or posted to Slack.');
-        if (generatedCount > 0) {
-            log(`A real run would do nothing: ${generatedCount} sessions are already generated this week.`);
+        if (generatedIds.length > 0) {
+            log(`${generatedIds.length} sessions are already generated this week, so a real run would do nothing. `
+                + 'The plan above leaves them out of the history: it is what this code would generate for this week.');
         }
+        return;
+    }
+
+    if (plan.pairs.length === 0) {
+        log('Fewer than two members are available: nothing is written to Notion or posted to Slack.');
         return;
     }
 

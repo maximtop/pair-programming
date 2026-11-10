@@ -20,7 +20,7 @@ const buildUnpairedText = (unpaired: TeamMember[]): string => {
  * @param pairs
  * @param unpaired
  */
-const buildRichMessage = (pairs: Pair<TeamMember>[], unpaired: TeamMember[]): Block[] => {
+export const buildRichMessage = (pairs: Pair<TeamMember>[], unpaired: TeamMember[]): Block[] => {
     let blocks = [
         {
             type: 'section',
@@ -73,7 +73,7 @@ const buildRichMessage = (pairs: Pair<TeamMember>[], unpaired: TeamMember[]): Bl
  * @param pairs
  * @param unpaired
  */
-export const buildSimpleMessage = (pairs: Pair<TeamMember>[], unpaired: TeamMember[] = []): string => {
+export const buildSimpleMessage = (pairs: Pair<TeamMember>[], unpaired: TeamMember[]): string => {
     const result = ['Current week pairs:'];
     pairs.forEach((pair, idx) => {
         const pairText = `${idx + 1}. ${pair[0].name} & ${pair[1].name}`;
@@ -91,7 +91,7 @@ export const buildSimpleMessage = (pairs: Pair<TeamMember>[], unpaired: TeamMemb
  * @param pairs
  * @param unpaired
  */
-export const publishToSlack = async (pairs: Pair<TeamMember>[], unpaired: TeamMember[] = []): Promise<void> => {
+export const publishToSlack = async (pairs: Pair<TeamMember>[], unpaired: TeamMember[]): Promise<void> => {
     const richMessage = buildRichMessage(pairs, unpaired);
     const simpleMessage = buildSimpleMessage(pairs, unpaired);
 

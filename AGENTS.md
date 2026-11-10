@@ -16,7 +16,7 @@ The codebase is a small TypeScript CLI-style automation project intended to run 
 - Target Platform: Node.js automation run locally and in GitHub Actions workflows.
 - Project Type: Single-package internal automation script.
 - Performance Goals: N/A; no explicit performance targets are documented.
-- Constraints: Requires `NOTION_API_KEY` and `SLACK_TOKEN`; Notion database IDs and the Slack channel ID are hard-coded in `src/config.ts`; when the available team size is odd, exactly one member sits out: among pairings with the lowest repeat score, the algorithm leaves out the member with the most past sessions (ties broken by the smaller id).
+- Constraints: A real run requires `NOTION_API_KEY` and `SLACK_TOKEN`, a dry run only `NOTION_API_KEY`; Notion database IDs and the Slack channel ID are hard-coded in `src/config.ts`; when the available team size is odd, exactly one member sits out: among pairings with the lowest repeat score, the algorithm leaves out the member with the most past sessions (ties broken by the smaller id).
 - Scale/Scope: Small internal team workflow, not a general-purpose public service.
 
 ## Project Structure

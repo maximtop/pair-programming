@@ -1,12 +1,12 @@
 import { describePlan, main } from '../src/index';
-import { addPairSessions, countSessionsGeneratedThisWeek, getPairingPlan } from '../src/notion';
+import { addPairSessions, getPairingPlan, getSessionIdsGeneratedThisWeek } from '../src/notion';
 import { publishToSlack } from '../src/slack';
 import { PairingPlan, TeamMember } from '../src/types';
 
 jest.mock('../src/notion', () => ({
     addPairSessions: jest.fn(),
-    countSessionsGeneratedThisWeek: jest.fn(),
     getPairingPlan: jest.fn(),
+    getSessionIdsGeneratedThisWeek: jest.fn(),
 }));
 
 jest.mock('../src/slack', () => ({
@@ -39,16 +39,22 @@ describe('main', () => {
         jest.clearAllMocks();
         logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
         jest.mocked(getPairingPlan).mockResolvedValue(plan);
-        jest.mocked(countSessionsGeneratedThisWeek).mockResolvedValue(0);
+        jest.mocked(getSessionIdsGeneratedThisWeek).mockResolvedValue([]);
     });
 
     afterEach(() => {
         logSpy.mockRestore();
     });
 
+    const generatedIds = ['s1', 's2', 's3'];
+
+    const getLog = (): string => logSpy.mock.calls.map(([message]) => message).join('\n');
+
     it('writes the pairs to Notion and posts them to Slack', async () => {
         await main({ dryRun: false });
 
+        expect(getPairingPlan).toHaveBeenCalledWith(expect.any(Date), []);
+        expect(logSpy).toHaveBeenCalledWith(describePlan(plan));
         expect(addPairSessions).toHaveBeenCalledWith(plan.pairs);
         expect(publishToSlack).toHaveBeenCalledWith(plan.pairs, plan.unpaired);
     });
@@ -62,22 +68,36 @@ describe('main', () => {
     });
 
     it('does nothing when the pairs for this week are already generated', async () => {
-        jest.mocked(countSessionsGeneratedThisWeek).mockResolvedValue(3);
+        jest.mocked(getSessionIdsGeneratedThisWeek).mockResolvedValue(generatedIds);
 
         await main({ dryRun: false });
 
         expect(getPairingPlan).not.toHaveBeenCalled();
         expect(addPairSessions).not.toHaveBeenCalled();
         expect(publishToSlack).not.toHaveBeenCalled();
+        expect(getLog()).toContain('already generated (3 sessions in Notion)');
+        expect(getLog()).toContain('move this week\'s generated sessions to the trash in Notion and run again');
     });
 
-    it('still prints the plan on a dry run when the pairs are already generated', async () => {
-        jest.mocked(countSessionsGeneratedThisWeek).mockResolvedValue(3);
+    it('plans without this week\'s sessions on a dry run when the pairs are already generated', async () => {
+        jest.mocked(getSessionIdsGeneratedThisWeek).mockResolvedValue(generatedIds);
 
         await main({ dryRun: true });
 
+        expect(getPairingPlan).toHaveBeenCalledWith(expect.any(Date), generatedIds);
         expect(logSpy).toHaveBeenCalledWith(describePlan(plan));
+        expect(getLog()).toContain('a real run would do nothing');
         expect(addPairSessions).not.toHaveBeenCalled();
         expect(publishToSlack).not.toHaveBeenCalled();
+    });
+
+    it('writes and posts nothing when there are no pairs', async () => {
+        jest.mocked(getPairingPlan).mockResolvedValue({ pairs: [], unpaired: [member('Max')], onVacation: [] });
+
+        await main({ dryRun: false });
+
+        expect(addPairSessions).not.toHaveBeenCalled();
+        expect(publishToSlack).not.toHaveBeenCalled();
+        expect(getLog()).toContain('Fewer than two members are available');
     });
 });

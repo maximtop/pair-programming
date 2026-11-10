@@ -68,6 +68,10 @@ A dry run reads Notion, prints the pairs, who is left without a pair, and who is
 on vacation, and stops. It does not write to Notion or post to Slack, and it
 needs only `NOTION_API_KEY`.
 
+If the pairs for the current week are already generated, a dry run leaves this
+week’s generated sessions out of the history. It prints what the current code
+would generate for this week, which you can compare with the sessions in Notion.
+
 To run the workflow for real:
 
 ```bash
@@ -88,6 +92,8 @@ Important:
 - A real run does nothing if the integration has already created pair sessions
   since Monday of the current week. See
   [The run says pairs are already generated](#the-run-says-pairs-are-already-generated).
+- A real run writes and posts nothing when fewer than two teammates are
+  available.
 
 ## Development Workflow
 
@@ -158,6 +164,8 @@ Operational caution:
 - A manual run of [generate-pairs.yml](.github/workflows/generate-pairs.yml) performs live writes to Notion and Slack unless you tick its `dry_run` input.
 - With `dry_run` ticked, the workflow runs `yarn start --dry-run` and only prints the pairs to the job log.
 - Run that workflow without `dry_run` only when you are prepared for those external side effects.
+- The workflow runs `yarn start` with `TZ=Europe/Nicosia`, so the week starts on Monday in the team’s time zone and dates match a local run. Keep it in step with the `timezone` of the schedule.
+- The workflow’s `concurrency` group makes runs wait for each other. Keep it: the rerun guard reads Notion before writing, so two overlapping runs would both pass it.
 
 ### Code style and tooling
 
@@ -231,8 +239,13 @@ generated and exits without writing to Notion or posting to Slack. This keeps a
 second run in the same week from creating duplicate sessions and a second Slack
 message. Sessions added by hand do not count.
 
-To regenerate the pairs for the week, first move this week’s generated sessions
-to the trash in the Pair sessions database, then run the workflow again.
+The same happens after a run that failed half-way, for example when Notion
+sessions were created and the Slack post failed: the next run finds the sessions
+and exits successfully without posting.
+
+To regenerate the pairs for the week, or to recover from a half-finished run,
+first move this week’s generated sessions to the trash in the Pair sessions
+database, then run the workflow again.
 
 ### Tests pass but the live run is still risky
 
