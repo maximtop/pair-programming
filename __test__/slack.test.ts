@@ -11,5 +11,15 @@ describe('slack', () => {
             expect(buildSimpleMessage(pairs))
                 .toBe('Current week pairs:\n1. Max & Bob\n2. John & Alice\ncc @extensions');
         });
+
+        it('names the member left without a pair', () => {
+            const pairs: Pair<TeamMember>[] = [
+                [{ name: 'Max', id: '', slack: '' }, { name: 'Bob', id: '', slack: '' }],
+            ];
+            const unpaired: TeamMember[] = [{ name: 'Alice', id: '', slack: '' }];
+
+            expect(buildSimpleMessage(pairs, unpaired))
+                .toBe('Current week pairs:\n1. Max & Bob\nNo pair this week: Alice\ncc @extensions');
+        });
     });
 });

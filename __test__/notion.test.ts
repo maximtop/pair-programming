@@ -2,6 +2,8 @@ import type { PageObjectResponse } from '@notionhq/client/build/src/api-endpoint
 
 import {
     buildAllPossiblePairs,
+    buildCurrentWeekSessionsFilter,
+    buildPairingPlan,
     buildVacationsFilter,
     generatePairProgrammingSessions,
     getAvailableTeamMembers,
@@ -366,5 +368,52 @@ describe('Notion page parsing', () => {
         expect(vacation.end).toBeNull();
         expect(getAvailableTeamMembers([{ id: 'alice' }, { id: 'bob' }], [vacation], new Date(2026, 10, 9, 7, 5)))
             .toEqual([{ id: 'bob' }]);
+    });
+});
+
+describe('buildCurrentWeekSessionsFilter', () => {
+    // Local-time dates, so the test does not depend on the machine's time zone
+    const monday = new Date(2026, 10, 9);
+
+    it.each([
+        ['Monday', new Date(2026, 10, 9, 7, 5)],
+        ['Wednesday', new Date(2026, 10, 11, 16, 45)],
+        ['Sunday', new Date(2026, 10, 15, 23, 59)],
+    ])('starts the week on Monday when run on %s', (_, now) => {
+        expect(buildCurrentWeekSessionsFilter(now)).toEqual({
+            timestamp: 'created_time',
+            created_time: { on_or_after: monday.toISOString() },
+        });
+    });
+});
+
+describe('buildPairingPlan', () => {
+    const now = new Date(2026, 10, 9, 7, 5);
+    const members = ['a', 'b', 'c', 'd', 'e'].map((id) => ({ id, name: id.toUpperCase(), slack: '' }));
+    const [a, b, c, d, e] = members;
+
+    it('leaves out members on vacation and reports them', () => {
+        const vacations = [{
+            id: 'v1',
+            memberId: e.id,
+            start: '2026-11-02',
+            end: '2026-11-13',
+        }];
+
+        const plan = buildPairingPlan(members, vacations, [], now);
+
+        expect(plan.pairs).toHaveLength(2);
+        expect(plan.pairs.flat().map((member) => member.id).sort()).toEqual([a, b, c, d].map((member) => member.id));
+        expect(plan.unpaired).toEqual([]);
+        expect(plan.onVacation).toEqual([e]);
+    });
+
+    it('reports the member left without a pair when the available count is odd', () => {
+        const plan = buildPairingPlan(members, [], [], now);
+
+        expect(plan.pairs).toHaveLength(2);
+        expect(plan.unpaired).toHaveLength(1);
+        expect(plan.pairs.flat()).not.toContain(plan.unpaired[0]);
+        expect(plan.onVacation).toEqual([]);
     });
 });

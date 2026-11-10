@@ -58,6 +58,18 @@ Notes:
 
 ### 3. Run the project locally
 
+To see this week’s pairs without changing anything, use a dry run:
+
+```bash
+yarn start --dry-run
+```
+
+A dry run reads Notion, prints the pairs, who is left without a pair, and who is
+on vacation, and stops. It does not write to Notion or post to Slack, and it
+needs only `NOTION_API_KEY`.
+
+To run the workflow for real:
+
 ```bash
 yarn start
 ```
@@ -65,15 +77,17 @@ yarn start
 What this does:
 
 - Loads team members, vacations, and previous pair sessions from Notion
-- Computes this week’s pairings
+- Computes this week’s pairings and prints them to the log
 - Creates planned pair-session entries in Notion
-- Posts the resulting list to Slack
+- Posts the resulting list to Slack, naming the teammate left without a pair
 
 Important:
 
 - `yarn start` performs live writes to Notion and Slack.
 - Only run it with valid credentials and against the workspace you intend to update.
-- There is no dry-run mode in the current codebase.
+- A real run does nothing if the integration has already created pair sessions
+  since Monday of the current week. See
+  [The run says pairs are already generated](#the-run-says-pairs-are-already-generated).
 
 ## Development Workflow
 
@@ -84,6 +98,7 @@ These are the scripts currently defined in [package.json](package.json):
 ```bash
 yarn install
 yarn start
+yarn start --dry-run
 yarn lint
 yarn test
 ```
@@ -92,6 +107,7 @@ What each command does:
 
 - `yarn install`: installs project dependencies from `yarn.lock`
 - `yarn start`: runs `npx ts-node -r @swc/register index.ts`
+- `yarn start --dry-run`: the same run without writes to Notion or Slack
 - `yarn lint`: runs `eslint . && tsc --noEmit`
 - `yarn test`: runs the Jest unit test suite
 
@@ -108,7 +124,8 @@ yarn test __test__/notion.test.ts
 3. Make code changes in [src/](src/) and update tests in [__test__/](__test__).
 4. Run `yarn lint`.
 5. Run `yarn test`.
-6. Only run `yarn start` if you intentionally want to create Notion records and send a Slack message.
+6. Run `yarn start --dry-run` to check the result against live Notion data.
+7. Only run `yarn start` if you intentionally want to create Notion records and send a Slack message.
 
 ### Contribution and review workflow
 
@@ -138,8 +155,9 @@ Temporary fallback guidance:
 
 Operational caution:
 
-- Manual validation of [generate-pairs.yml](.github/workflows/generate-pairs.yml) runs `yarn start` and performs live writes to Notion and Slack.
-- Validate that workflow only when you are prepared for those external side effects.
+- A manual run of [generate-pairs.yml](.github/workflows/generate-pairs.yml) performs live writes to Notion and Slack unless you tick its `dry_run` input.
+- With `dry_run` ticked, the workflow runs `yarn start --dry-run` and only prints the pairs to the job log.
+- Run that workflow without `dry_run` only when you are prepared for those external side effects.
 
 ### Code style and tooling
 
@@ -205,9 +223,20 @@ The current dependency set uses TypeScript `5.3.2`, while `@typescript-eslint/ty
 
 This is expected when the number of available teammates is odd: exactly one person sits out. The algorithm first minimizes repeated pairs, then, among equally good pairings, leaves out the teammate with the most past sessions (ties broken by the smaller Notion page id). This evens out past session counts. Counts cover all history, so after a roster change the same person can sit out several weeks in a row until the counts level.
 
+### The run says pairs are already generated
+
+A real run counts the pair sessions that the integration itself created since
+Monday of the current week. If there are any, it logs that the pairs are already
+generated and exits without writing to Notion or posting to Slack. This keeps a
+second run in the same week from creating duplicate sessions and a second Slack
+message. Sessions added by hand do not count.
+
+To regenerate the pairs for the week, first move this week’s generated sessions
+to the trash in the Pair sessions database, then run the workflow again.
+
 ### Tests pass but the live run is still risky
 
-The unit tests cover pure helpers only: pairing, vacation availability, Notion retries and query filters, and Slack message formatting. They do not exercise live Notion or Slack API calls. Treat `yarn start` as an integration action with side effects.
+The unit tests cover pure helpers and the run orchestration with Notion and Slack mocked: pairing, vacation availability, Notion retries and query filters, the dry run and the rerun guard, and Slack message formatting. They do not exercise live Notion or Slack API calls. Use `yarn start --dry-run` to check a change against live data, and treat `yarn start` as an integration action with side effects.
 
 ## Additional Resources
 

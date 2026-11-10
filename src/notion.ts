@@ -5,10 +5,15 @@ import type {
     QueryDatabaseParameters,
     QueryDatabaseResponse,
 } from '@notionhq/client/build/src/api-endpoints';
-import { addDays, format } from 'date-fns';
+import { addDays, format, startOfWeek } from 'date-fns';
 
 import { PAIR_SESSIONS_TABLE_ID, TEAM_MEMBERS_TABLE_ID, VACATIONS_TABLE_ID } from './config';
-import { BaseTeamMember, Pair, TeamMember } from './types';
+import {
+    BaseTeamMember,
+    Pair,
+    PairingPlan,
+    TeamMember,
+} from './types';
 
 import 'dotenv/config';
 
@@ -351,6 +356,37 @@ export const addPairSessions = async (pairs: Pair<TeamMember>[]): Promise<void> 
     await Promise.all(promises);
 };
 
+/**
+ * Builds the filter for pair sessions created since the start of the current week (Monday).
+ * It filters by creation time, not by the `Date` property: teammates move `Date` to the day
+ * the session actually took place, so a late session from last week can be dated this week.
+ * @param now
+ */
+export const buildCurrentWeekSessionsFilter = (now: Date): QueryDatabaseParameters['filter'] => ({
+    timestamp: 'created_time',
+    created_time: { on_or_after: startOfWeek(now, { weekStartsOn: 1 }).toISOString() },
+});
+
+/**
+ * Counts the pair sessions this integration has already created this week.
+ * Sessions added by hand are not counted.
+ * @param now
+ */
+export const countSessionsGeneratedThisWeek = async (now: Date): Promise<number> => {
+    const [bot, blocks] = await Promise.all([
+        withNotionRetry(() => notion.users.me({}), 'Get integration user'),
+        queryDatabase({
+            database_id: PAIR_SESSIONS_TABLE_ID,
+            filter: buildCurrentWeekSessionsFilter(now),
+        }, 'Query pair sessions created this week'),
+    ]);
+
+    return blocks
+        .filter((block): block is PageObjectResponse => 'created_by' in block)
+        .filter((block) => block.created_by.id === bot.id)
+        .length;
+};
+
 interface BasePairSession<T> {
     id: string,
     members: T[]
@@ -573,13 +609,37 @@ export const buildAllPossiblePairs = <T>(allMembers: T[]): [T, T][] => {
 };
 
 /**
- * Returns all possible pairs for the current week
+ * Builds the plan for the week: the pairs, who is left without a pair and who is on vacation
+ * @param teamMembers
+ * @param vacations
+ * @param previousPairSessions
+ * @param now
  */
-export const getPairs = async (): Promise<Pair<TeamMember>[]> => {
+export const buildPairingPlan = (
+    teamMembers: TeamMember[],
+    vacations: Vacation[],
+    previousPairSessions: BasePairSession<TeamMember>[],
+    now: Date,
+): PairingPlan => {
+    const available = getAvailableTeamMembers(teamMembers, vacations, now);
+    const pairs = generatePairProgrammingSessions(available, previousPairSessions);
+    const pairedIds = new Set(pairs.flat().map((member) => member.id));
+
+    return {
+        pairs,
+        unpaired: available.filter((member) => !pairedIds.has(member.id)),
+        onVacation: teamMembers.filter((member) => !available.includes(member)),
+    };
+};
+
+/**
+ * Returns the pairing plan for the current week
+ * @param now
+ */
+export const getPairingPlan = async (now: Date): Promise<PairingPlan> => {
     const teamMembers = await getTeamMembers();
     const vacations = await getVacations();
     const previousPairSessions = await getPreviousPairSessions();
 
-    const availableTeamMembers = getAvailableTeamMembers(teamMembers, vacations, new Date());
-    return generatePairProgrammingSessions(availableTeamMembers, previousPairSessions);
+    return buildPairingPlan(teamMembers, vacations, previousPairSessions, now);
 };

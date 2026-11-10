@@ -5,6 +5,11 @@ on:
     - cron: '5 7 * * 1'
       timezone: 'Europe/Nicosia'
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Print the pairs without writing to Notion or posting to Slack'
+        type: boolean
+        default: false
 
 jobs:
   run-yarn-start:
@@ -22,7 +27,7 @@ jobs:
         run: yarn install
 
       - name: Run yarn start
-        run: yarn start
+        run: yarn start ${{ inputs.dry_run && '--dry-run' || '' }}
         env:
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
