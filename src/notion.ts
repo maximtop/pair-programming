@@ -5,7 +5,13 @@ import type {
     QueryDatabaseParameters,
     QueryDatabaseResponse,
 } from '@notionhq/client/build/src/api-endpoints';
-import { addDays, format, startOfWeek } from 'date-fns';
+import {
+    addDays,
+    differenceInCalendarDays,
+    format,
+    parseISO,
+    startOfWeek,
+} from 'date-fns';
 
 import { PAIR_SESSIONS_TABLE_ID, TEAM_MEMBERS_TABLE_ID, VACATIONS_TABLE_ID } from './config';
 import {
@@ -402,8 +408,28 @@ export const getSessionIdsGeneratedThisWeek = async (now: Date): Promise<string[
 
 interface BasePairSession<T> {
     id: string,
-    members: T[]
+    members: T[],
+    // How much the session counts as a repeat; see `getSessionWeight`
+    weight: number,
 }
+
+// A session counts half as much with every `HISTORY_HALF_LIFE_WEEKS` weeks of age
+const HISTORY_HALF_LIFE_WEEKS = 4;
+
+// Weight of a session held today. Weights are integers, so equal histories give exactly equal scores.
+const SESSION_WEIGHT_SCALE = 1000;
+
+/**
+ * Returns how much a session held on `date` counts as a repeat at `now`.
+ * Recent sessions weigh more than old ones, so the search prefers the pairs that have not met for longest
+ * instead of evening out the totals of the whole history.
+ * @param date Notion date value of the session
+ * @param now
+ */
+export const getSessionWeight = (date: string, now: Date): number => {
+    const ageWeeks = Math.max(0, differenceInCalendarDays(now, parseISO(date))) / 7;
+    return Math.round(SESSION_WEIGHT_SCALE * 0.5 ** (ageWeeks / HISTORY_HALF_LIFE_WEEKS));
+};
 
 /**
  * Creates a unique key for a pair of members
@@ -414,35 +440,35 @@ function createPairKey(members: BaseTeamMember[]): string {
 }
 
 /**
- * Creates a map to count occurrences of each pair in previous sessions
+ * Creates a map with the total weight of the previous sessions of each pair
  * @param previousSessions
  */
-function createPairsCountMap<
+function createPairWeightsMap<
     T extends BaseTeamMember,
     P extends BasePairSession<T>,
 >(previousSessions: P[]): Map<string, number> {
     return previousSessions.reduce((acc, session) => {
         const key = createPairKey(session.members);
-        acc.set(key, (acc.get(key) || 0) + 1);
+        acc.set(key, (acc.get(key) || 0) + session.weight);
         return acc;
     }, new Map());
 }
 
 /**
- * Counts how many previous sessions each member took part in
+ * Creates a map with the total weight of the previous sessions each member took part in
  * @param previousSessions
  */
-function createSessionsCountMap<
+function createMemberWeightsMap<
     T extends BaseTeamMember,
     P extends BasePairSession<T>,
 >(previousSessions: P[]): Map<string, number> {
-    const counts = new Map<string, number>();
+    const weights = new Map<string, number>();
     previousSessions.forEach((session) => {
         session.members.forEach((member) => {
-            counts.set(member.id, (counts.get(member.id) || 0) + 1);
+            weights.set(member.id, (weights.get(member.id) || 0) + session.weight);
         });
     });
-    return counts;
+    return weights;
 }
 
 interface PairingResult<T extends BaseTeamMember> {
@@ -453,23 +479,24 @@ interface PairingResult<T extends BaseTeamMember> {
 }
 
 interface PairingContext<T extends BaseTeamMember> {
-    pairsCountMap: Map<string, number>,
-    sessionsCountMap: Map<string, number>,
+    pairWeightsMap: Map<string, number>,
+    memberWeightsMap: Map<string, number>,
     cache: Map<string, PairingResult<T>>,
 }
 
 /**
  * Compares pairings: the lower repeat score wins.
- * On equal scores, the one whose sit-out member had more previous sessions wins, then the one with the smaller id.
- * This evens out past session counts instead of leaving out the first member every week.
+ * On equal scores, the one whose sit-out member has the larger total weight of previous sessions wins,
+ * then the one with the smaller id.
+ * This rotates who sits out instead of leaving out the first member every week.
  * @param a
  * @param b
- * @param sessionsCountMap
+ * @param memberWeightsMap
  */
 function isBetterPairing<T extends BaseTeamMember>(
     a: PairingResult<T>,
     b: PairingResult<T>,
-    sessionsCountMap: Map<string, number>,
+    memberWeightsMap: Map<string, number>,
 ): boolean {
     if (a.score !== b.score) {
         return a.score < b.score;
@@ -479,10 +506,10 @@ function isBetterPairing<T extends BaseTeamMember>(
         return false;
     }
 
-    const aSessions = sessionsCountMap.get(a.sitOut.id) || 0;
-    const bSessions = sessionsCountMap.get(b.sitOut.id) || 0;
-    if (aSessions !== bSessions) {
-        return aSessions > bSessions;
+    const aWeight = memberWeightsMap.get(a.sitOut.id) || 0;
+    const bWeight = memberWeightsMap.get(b.sitOut.id) || 0;
+    if (aWeight !== bWeight) {
+        return aWeight > bWeight;
     }
 
     return a.sitOut.id < b.sitOut.id;
@@ -527,11 +554,11 @@ function findOptimalPairs<T extends BaseTeamMember>(
         const result = findOptimalPairs(rest.filter((_, i) => i !== index), context);
         const candidate: PairingResult<T> = {
             pairs: [pair, ...result.pairs],
-            score: (context.pairsCountMap.get(createPairKey(pair)) || 0) + result.score,
+            score: (context.pairWeightsMap.get(createPairKey(pair)) || 0) + result.score,
             sitOut: result.sitOut,
         };
 
-        if (isBetterPairing(candidate, best, context.sessionsCountMap)) {
+        if (isBetterPairing(candidate, best, context.memberWeightsMap)) {
             best = candidate;
         }
     });
@@ -549,8 +576,8 @@ export const generatePairProgrammingSessions = <T extends BaseTeamMember, P exte
     availableTeamMembers: T[],
     previousSessions: P[],
 ): Pair<T>[] => findOptimalPairs(availableTeamMembers, {
-    pairsCountMap: createPairsCountMap<T, P>(previousSessions),
-    sessionsCountMap: createSessionsCountMap<T, P>(previousSessions),
+    pairWeightsMap: createPairWeightsMap<T, P>(previousSessions),
+    memberWeightsMap: createMemberWeightsMap<T, P>(previousSessions),
     cache: new Map(),
 }).pairs;
 
@@ -624,7 +651,7 @@ export const buildAllPossiblePairs = <T>(allMembers: T[]): [T, T][] => {
 interface PairingPlanInput {
     teamMembers: TeamMember[],
     vacations: Vacation[],
-    previousPairSessions: BasePairSession<TeamMember>[],
+    previousPairSessions: Pick<PairSession, 'id' | 'members' | 'date'>[],
     // Sessions to leave out of the history
     ignoredSessionIds: string[],
     now: Date,
@@ -645,7 +672,9 @@ export const buildPairingPlan = (input: PairingPlanInput): PairingPlan => {
 
     const available = getAvailableTeamMembers(teamMembers, vacations, now);
     const availableIds = new Set(available.map((member) => member.id));
-    const history = previousPairSessions.filter((session) => !ignoredSessionIds.includes(session.id));
+    const history = previousPairSessions
+        .filter((session) => !ignoredSessionIds.includes(session.id))
+        .map((session) => ({ ...session, weight: getSessionWeight(session.date, now) }));
     const pairs = generatePairProgrammingSessions(available, history);
     const pairedIds = new Set(pairs.flat().map((member) => member.id));
 
