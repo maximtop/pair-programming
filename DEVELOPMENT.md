@@ -163,7 +163,7 @@ There is no production build step or output directory in this repository.
 
 - Main pairing logic lives in [src/notion.ts](src/notion.ts).
 - Unit coverage for pairing behavior lives in [__test__/notion.test.ts](__test__/notion.test.ts).
-- If you change pair selection rules, verify both even-member and odd-member scenarios because the current implementation does not explicitly handle a leftover teammate.
+- If you change pair selection rules, verify both even-member and odd-member scenarios. With an odd count, one teammate sits out; the tests check that the repeat score stays minimal and that the teammate with the most past sessions sits out.
 
 ### Change the Slack message format
 
@@ -203,11 +203,11 @@ The current dependency set uses TypeScript `5.3.2`, while `@typescript-eslint/ty
 
 ### No pairs are created for one teammate
 
-The current pairing algorithm only guarantees full pairing coverage for an even number of available teammates. If the available roster is odd, one person may remain unassigned.
+This is expected when the number of available teammates is odd: exactly one person sits out. The algorithm first minimizes repeated pairs, then, among equally good pairings, leaves out the teammate with the most past sessions (ties broken by the smaller Notion page id). This evens out past session counts. Counts cover all history, so after a roster change the same person can sit out several weeks in a row until the counts level.
 
 ### Tests pass but the live run is still risky
 
-The unit tests cover pairing and Slack message formatting only. They do not exercise live Notion or Slack API calls. Treat `yarn start` as an integration action with side effects.
+The unit tests cover pure helpers only: pairing, vacation availability, Notion retries and query filters, and Slack message formatting. They do not exercise live Notion or Slack API calls. Treat `yarn start` as an integration action with side effects.
 
 ## Additional Resources
 

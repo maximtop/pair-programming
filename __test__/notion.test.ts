@@ -1,8 +1,13 @@
+import type { PageObjectResponse } from '@notionhq/client/build/src/api-endpoints';
+
 import {
     buildAllPossiblePairs,
     buildVacationsFilter,
     generatePairProgrammingSessions,
+    getAvailableTeamMembers,
     isRetryableNotionError,
+    parseTeamMember,
+    parseVacation,
     withNotionRetry,
 } from '../src/notion';
 
@@ -141,5 +146,225 @@ describe('buildVacationsFilter', () => {
             property: 'Date',
             date: { before: '2026-11-16T10:00:00.000Z' },
         });
+    });
+});
+
+describe('generatePairProgrammingSessions optimality', () => {
+    type Member = { id: string };
+    type Session = { id: string, members: Member[] };
+
+    const pairKey = (a: Member, b: Member): string => [a.id, b.id].sort().join(':');
+
+    const countPairs = (sessions: Session[]): Map<string, number> => {
+        const counts = new Map<string, number>();
+        sessions.forEach(({ members: [a, b] }) => {
+            counts.set(pairKey(a, b), (counts.get(pairKey(a, b)) ?? 0) + 1);
+        });
+        return counts;
+    };
+
+    const countSessions = (sessions: Session[]): Map<string, number> => {
+        const counts = new Map<string, number>();
+        sessions.flatMap((session) => session.members).forEach((member) => {
+            counts.set(member.id, (counts.get(member.id) ?? 0) + 1);
+        });
+        return counts;
+    };
+
+    const getSitOut = (pairs: [Member, Member][], members: Member[]): Member => {
+        const paired = new Set(pairs.flat());
+        const [sitOut] = members.filter((member) => !paired.has(member));
+        return sitOut;
+    };
+
+    const scorePairs = (pairs: [Member, Member][], counts: Map<string, number>): number => pairs
+        .reduce((sum, [a, b]) => sum + (counts.get(pairKey(a, b)) ?? 0), 0);
+
+    // Minimum score over all perfect matchings, by full enumeration
+    const bruteForceEven = (members: Member[], counts: Map<string, number>): number => {
+        if (members.length === 0) {
+            return 0;
+        }
+        const [first, ...rest] = members;
+        return Math.min(...rest.map((partner, index) => (counts.get(pairKey(first, partner)) ?? 0)
+            + bruteForceEven(rest.filter((_, i) => i !== index), counts)));
+    };
+
+    // For odd counts, also try every member as the one who sits out
+    const bruteForce = (members: Member[], counts: Map<string, number>): number => (members.length % 2 === 0
+        ? bruteForceEven(members, counts)
+        : Math.min(...members.map((_, out) => bruteForceEven(members.filter((__, i) => i !== out), counts))));
+
+    // Deterministic PRNG (mulberry32) so failures are reproducible
+    const createRandom = (seed: number): () => number => {
+        let state = seed;
+        return () => {
+            state = (state + 0x6D2B79F5) | 0;
+            let t = Math.imul(state ^ (state >>> 15), 1 | state);
+            t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+    };
+
+    const createMembers = (count: number): Member[] => Array.from({ length: count }, (_, i) => ({ id: `m${i}` }));
+
+    const expectValidPairing = (pairs: [Member, Member][], members: Member[]): void => {
+        const ids = pairs.flat().map((m) => m.id);
+        expect(new Set(ids).size).toBe(ids.length);
+        expect(pairs).toHaveLength(Math.floor(members.length / 2));
+    };
+
+    it('avoids a repeated pair that an earlier search path left behind', () => {
+        const [a, b, c, d, e, f] = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => ({ id }));
+        const sessions = [
+            { id: '1', members: [d, e] },
+            { id: '2', members: [d, f] },
+            { id: '3', members: [e, f] },
+        ];
+
+        const pairs = generatePairProgrammingSessions([a, b, c, d, e, f], sessions);
+
+        expectValidPairing(pairs, [a, b, c, d, e, f]);
+        expect(scorePairs(pairs, countPairs(sessions))).toBe(0);
+    });
+
+    it.each([4, 5, 6, 7, 8, 9, 10])('matches the brute-force minimum for %i members', (memberCount) => {
+        const random = createRandom(memberCount);
+        const members = createMembers(memberCount);
+
+        for (let run = 0; run < 30; run += 1) {
+            const sessions: Session[] = Array.from({ length: 25 }, (_, i) => {
+                const a = Math.floor(random() * memberCount);
+                const b = (a + 1 + Math.floor(random() * (memberCount - 1))) % memberCount;
+                return { id: String(i), members: [members[a], members[b]] };
+            });
+            const counts = countPairs(sessions);
+
+            const pairs = generatePairProgrammingSessions(members, sessions);
+
+            expectValidPairing(pairs, members);
+            const minScore = bruteForce(members, counts);
+            expect(scorePairs(pairs, counts)).toBe(minScore);
+
+            if (memberCount % 2 === 1) {
+                // Among members whose sitting out allows the minimum score,
+                // the one with the most previous sessions sits out, then the smallest id
+                const sessionCounts = countSessions(sessions);
+                const [expectedSitOut] = members
+                    .filter((member) => bruteForceEven(members.filter((m) => m !== member), counts) === minScore)
+                    .sort((a, b) => (sessionCounts.get(b.id) ?? 0) - (sessionCounts.get(a.id) ?? 0)
+                        || (a.id < b.id ? -1 : 1));
+
+                expect(getSitOut(pairs, members)).toBe(expectedSitOut);
+            }
+        }
+    });
+
+    it.each([5, 7, 9])('rotates who sits out among %i members while no pair repeats', (memberCount) => {
+        const members = createMembers(memberCount);
+        const sessions: Session[] = [];
+        const sitOuts: Member[] = [];
+
+        for (let week = 0; week < memberCount; week += 1) {
+            const pairs = generatePairProgrammingSessions(members, sessions);
+
+            expectValidPairing(pairs, members);
+            expect(scorePairs(pairs, countPairs(sessions))).toBe(0);
+            sitOuts.push(getSitOut(pairs, members));
+            pairs.forEach((pair) => sessions.push({ id: String(sessions.length), members: pair }));
+        }
+
+        expect(new Set(sitOuts).size).toBe(memberCount);
+    });
+});
+
+describe('getAvailableTeamMembers', () => {
+    const alice = { id: 'alice' };
+    const bob = { id: 'bob' };
+
+    // Monday 2026-11-09 07:05 in the local time zone
+    const mondayMorning = new Date(2026, 10, 9, 7, 5);
+
+    it.each([
+        ['single-day vacation today', '2026-11-09', null, false],
+        ['range ending today', '2026-11-02', '2026-11-09', false],
+        ['range starting today', '2026-11-09', '2026-11-13', false],
+        ['range that ended yesterday', '2026-11-02', '2026-11-08', true],
+        ['single-day vacation tomorrow', '2026-11-10', null, true],
+        ['single-day vacation last week', '2026-11-02', null, true],
+        ['single-day vacation today entered with a time', '2026-11-09T09:00:00.000+02:00', null, false],
+        ['single-day vacation yesterday entered with a time', '2026-11-08T09:00:00.000+02:00', null, true],
+    ])('%s', (_, start, end, available) => {
+        const vacations = [{
+            id: 'v1', memberId: 'alice', start, end,
+        }];
+
+        expect(getAvailableTeamMembers([alice, bob], vacations, mondayMorning))
+            .toEqual(available ? [alice, bob] : [bob]);
+    });
+
+    it.each([
+        ['covering now', '2026-11-09T00:00:00.000Z', '2026-11-09T12:00:00.000Z', false],
+        ['ended before now', '2026-11-08T09:00:00.000Z', '2026-11-09T05:00:00.000Z', true],
+        ['starting after now', '2026-11-09T08:05:00.000+02:00', '2026-11-09T18:00:00.000+02:00', true],
+    ])('datetime range %s', (_, start, end, available) => {
+        const vacations = [{
+            id: 'v1', memberId: 'alice', start, end,
+        }];
+
+        expect(getAvailableTeamMembers([alice, bob], vacations, new Date('2026-11-09T05:05:00.000Z')))
+            .toEqual(available ? [alice, bob] : [bob]);
+    });
+});
+
+describe('Notion page parsing', () => {
+    // Only the fields the parsers read; the real response has many more
+    const createPage = (properties: Record<string, unknown>): PageObjectResponse => ({
+        id: 'page-1',
+        properties,
+    } as unknown as PageObjectResponse);
+
+    const text = (value: string): { plain_text: string } => ({ plain_text: value });
+
+    it('parses a team member', () => {
+        const page = createPage({
+            Name: { type: 'title', title: [text('Alice')] },
+            Slack: { type: 'rich_text', rich_text: [text('U123')] },
+        });
+
+        expect(parseTeamMember(page)).toEqual({ id: 'page-1', name: 'Alice', slack: 'U123' });
+    });
+
+    it('falls back to Unknown for blank team member fields', () => {
+        const page = createPage({
+            Name: { type: 'title', title: [] },
+            Slack: { type: 'rich_text', rich_text: [] },
+        });
+
+        expect(parseTeamMember(page)).toEqual({ id: 'page-1', name: 'Unknown', slack: 'Unknown' });
+    });
+
+    it('parses a vacation range', () => {
+        const page = createPage({
+            'Team members': { type: 'relation', relation: [{ id: 'alice' }] },
+            Date: { type: 'date', date: { start: '2026-11-02', end: '2026-11-09', time_zone: null } },
+        });
+
+        expect(parseVacation(page)).toEqual({
+            id: 'page-1', memberId: 'alice', start: '2026-11-02', end: '2026-11-09',
+        });
+    });
+
+    it('keeps a single-day vacation without an end and applies it', () => {
+        const page = createPage({
+            'Team members': { type: 'relation', relation: [{ id: 'alice' }] },
+            Date: { type: 'date', date: { start: '2026-11-09', end: null, time_zone: null } },
+        });
+
+        const vacation = parseVacation(page);
+
+        expect(vacation.end).toBeNull();
+        expect(getAvailableTeamMembers([{ id: 'alice' }, { id: 'bob' }], [vacation], new Date(2026, 10, 9, 7, 5)))
+            .toEqual([{ id: 'bob' }]);
     });
 });

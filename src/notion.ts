@@ -8,7 +8,7 @@ import type {
 import { addDays, format } from 'date-fns';
 
 import { PAIR_SESSIONS_TABLE_ID, TEAM_MEMBERS_TABLE_ID, VACATIONS_TABLE_ID } from './config';
-import { TeamMember } from './types';
+import { BaseTeamMember, Pair, TeamMember } from './types';
 
 import 'dotenv/config';
 
@@ -174,6 +174,28 @@ function isRichTextProperty(property: any): property is { rich_text: { plain_tex
 }
 
 /**
+ * Maps a team members database page to a team member; blank fields become 'Unknown'
+ * @param page
+ */
+export const parseTeamMember = (page: PageObjectResponse): TeamMember => {
+    const nameProperty = page.properties[TeamMembersColumn.Name];
+    const slackProperty = page.properties[TeamMembersColumn.Slack];
+
+    const name = isTitleProperty(nameProperty) && nameProperty.title.length > 0
+        ? nameProperty.title[0].plain_text
+        : 'Unknown';
+    const slack = isRichTextProperty(slackProperty) && slackProperty.rich_text.length > 0
+        ? slackProperty.rich_text[0].plain_text
+        : 'Unknown';
+
+    return {
+        id: page.id,
+        name,
+        slack,
+    };
+};
+
+/**
  * Returns team members marked as enabled
  */
 const getTeamMembers = async (): Promise<TeamMember[]> => {
@@ -187,26 +209,15 @@ const getTeamMembers = async (): Promise<TeamMember[]> => {
 
     return blocks
         .filter((block): block is PageObjectResponse => block.object === 'page')
-        .map((block) => {
-            const nameProperty = block.properties[TeamMembersColumn.Name];
-            const slackProperty = block.properties[TeamMembersColumn.Slack];
-
-            const name = isTitleProperty(nameProperty) ? nameProperty.title[0].plain_text : 'Unknown';
-            const slack = isRichTextProperty(slackProperty) ? slackProperty.rich_text[0].plain_text : 'Unknown';
-
-            return {
-                id: block.id,
-                name,
-                slack,
-            };
-        });
+        .map(parseTeamMember);
 };
 
-interface Vacation {
+export interface Vacation {
     id: string;
     memberId: string,
     start: string,
-    end: string,
+    // Null for a single-day vacation
+    end: string | null,
 }
 
 const VACATIONS_LOOKAHEAD_DAYS = 7;
@@ -222,6 +233,32 @@ export const buildVacationsFilter = (now: Date): QueryDatabaseParameters['filter
 });
 
 /**
+ * Maps a vacations database page to a vacation
+ * @param page
+ */
+export const parseVacation = (page: PageObjectResponse): Vacation => {
+    const memberIdProperty = page.properties[VacationsColumn.TeamMembers];
+    const dateProperty = page.properties[VacationsColumn.Date];
+
+    const memberId = memberIdProperty?.type === 'relation' && memberIdProperty.relation.length > 0
+        ? memberIdProperty.relation[0].id
+        : 'Unknown';
+    const start = dateProperty?.type === 'date' && dateProperty.date?.start
+        ? dateProperty.date.start
+        : 'Unknown';
+    const end = dateProperty?.type === 'date' && dateProperty.date?.end
+        ? dateProperty.date.end
+        : null;
+
+    return {
+        id: page.id,
+        memberId,
+        start,
+        end,
+    };
+};
+
+/**
  * Returns vacations for the next week
  */
 const getVacations = async (): Promise<Vacation[]> => {
@@ -232,27 +269,7 @@ const getVacations = async (): Promise<Vacation[]> => {
 
     return blocks
         .filter((block: any): block is PageObjectResponse => block.object === 'page')
-        .map((block) => {
-            const memberIdProperty = block.properties[VacationsColumn.TeamMembers];
-            const dateProperty = block.properties[VacationsColumn.Date];
-
-            const memberId = memberIdProperty?.type === 'relation' && memberIdProperty.relation.length > 0
-                ? memberIdProperty.relation[0].id
-                : 'Unknown';
-            const startDate = dateProperty?.type === 'date' && dateProperty.date?.start
-                ? dateProperty.date.start
-                : 'Unknown';
-            const endDate = dateProperty?.type === 'date' && dateProperty.date?.end
-                ? dateProperty.date.end
-                : 'Unknown';
-
-            return {
-                id: block.id,
-                memberId,
-                start: startDate,
-                end: endDate,
-            };
-        });
+        .map(parseVacation);
 };
 
 interface PairSession {
@@ -334,12 +351,6 @@ export const addPairSessions = async (pairs: Pair<TeamMember>[]): Promise<void> 
     await Promise.all(promises);
 };
 
-type Pair<T extends BaseTeamMember> = [T, T];
-
-interface BaseTeamMember {
-    id: string,
-}
-
 interface BasePairSession<T> {
     id: string,
     members: T[]
@@ -369,65 +380,115 @@ function createPairsCountMap<
 }
 
 /**
- * Generates all possible unique pairs from the given array of members
- * @param members
+ * Counts how many previous sessions each member took part in
+ * @param previousSessions
  */
-function generateAllUniquePairs<T extends BaseTeamMember>(members: T[]): Pair<T>[] {
-    const pairs: Pair<T>[] = [];
-    for (let i = 0; i < members.length; i += 1) {
-        for (let j = i + 1; j < members.length; j += 1) {
-            pairs.push([members[i], members[j]]);
-        }
-    }
-    return pairs;
+function createSessionsCountMap<
+    T extends BaseTeamMember,
+    P extends BasePairSession<T>,
+>(previousSessions: P[]): Map<string, number> {
+    const counts = new Map<string, number>();
+    previousSessions.forEach((session) => {
+        session.members.forEach((member) => {
+            counts.set(member.id, (counts.get(member.id) || 0) + 1);
+        });
+    });
+    return counts;
+}
+
+interface PairingResult<T extends BaseTeamMember> {
+    pairs: Pair<T>[],
+    score: number,
+    // The member left without a pair when the number of members is odd
+    sitOut?: T,
+}
+
+interface PairingContext<T extends BaseTeamMember> {
+    pairsCountMap: Map<string, number>,
+    sessionsCountMap: Map<string, number>,
+    cache: Map<string, PairingResult<T>>,
 }
 
 /**
- * Finds optimal pairs using a dynamic programming approach with caching
- * @param remainingPairs
- * @param pairsCountMap
- * @param currentPairs
- * @param currentScore
- * @param dpCache
+ * Compares pairings: the lower repeat score wins.
+ * On equal scores, the one whose sit-out member had more previous sessions wins, then the one with the smaller id.
+ * This evens out past session counts instead of leaving out the first member every week.
+ * @param a
+ * @param b
+ * @param sessionsCountMap
  */
-function findOptimalPairsWithCaching<T extends BaseTeamMember>(
-    remainingPairs: Pair<T>[],
-    pairsCountMap: Map<string, number>,
-    currentPairs: Pair<T>[] = [],
-    currentScore = 0,
-    dpCache = new Map(),
-): { pairs: Pair<T>[]; score: number } {
-    const cacheKey = remainingPairs.map((p) => createPairKey(p)).join('|');
-    if (dpCache.has(cacheKey)) {
-        return dpCache.get(cacheKey);
+function isBetterPairing<T extends BaseTeamMember>(
+    a: PairingResult<T>,
+    b: PairingResult<T>,
+    sessionsCountMap: Map<string, number>,
+): boolean {
+    if (a.score !== b.score) {
+        return a.score < b.score;
     }
 
-    if (remainingPairs.length === 0) {
-        return { pairs: currentPairs, score: currentScore };
+    if (!a.sitOut || !b.sitOut) {
+        return false;
     }
 
-    // Initialize bestResult with a default valid object
-    let bestResult: { pairs: Pair<T>[]; score: number } = {
-        pairs: [],
-        score: Number.MAX_SAFE_INTEGER,
-    };
+    const aSessions = sessionsCountMap.get(a.sitOut.id) || 0;
+    const bSessions = sessionsCountMap.get(b.sitOut.id) || 0;
+    if (aSessions !== bSessions) {
+        return aSessions > bSessions;
+    }
 
-    for (const pair of remainingPairs) {
-        const key = createPairKey(pair);
-        const pairScore = pairsCountMap.get(key) || 0;
-        const newScore = currentScore + pairScore;
-        const newPairs = [...currentPairs, pair];
-        const filteredRemainingPairs = remainingPairs.filter((p) => !p.includes(pair[0]) && !p.includes(pair[1]));
+    return a.sitOut.id < b.sitOut.id;
+}
 
-        const result = findOptimalPairsWithCaching(filteredRemainingPairs, pairsCountMap, newPairs, newScore, dpCache);
+/**
+ * Finds the pairing of `members` with the lowest total count of repeated pairs.
+ * With an odd number of members, one member stays unpaired; see `isBetterPairing` for how they are chosen.
+ *
+ * The best pairing of a set of members does not depend on how the other members were paired,
+ * so results are cached per set of remaining members.
+ * @param members
+ * @param context
+ */
+function findOptimalPairs<T extends BaseTeamMember>(
+    members: T[],
+    context: PairingContext<T>,
+): PairingResult<T> {
+    if (members.length === 0) {
+        return { pairs: [], score: 0 };
+    }
 
-        if (result.score < bestResult.score) {
-            bestResult = result;
+    if (members.length === 1) {
+        return { pairs: [], score: 0, sitOut: members[0] };
+    }
+
+    const cacheKey = members.map((m) => m.id).sort().join('|');
+    const cached = context.cache.get(cacheKey);
+    if (cached) {
+        return cached;
+    }
+
+    const [first, ...rest] = members;
+
+    // With an odd count, the first member may be the one who stays unpaired
+    let best: PairingResult<T> = members.length % 2 === 1
+        ? { ...findOptimalPairs(rest, context), sitOut: first }
+        : { pairs: [], score: Number.POSITIVE_INFINITY };
+
+    rest.forEach((partner, index) => {
+        const pair: Pair<T> = [first, partner];
+        const result = findOptimalPairs(rest.filter((_, i) => i !== index), context);
+        const candidate: PairingResult<T> = {
+            pairs: [pair, ...result.pairs],
+            score: (context.pairsCountMap.get(createPairKey(pair)) || 0) + result.score,
+            sitOut: result.sitOut,
+        };
+
+        if (isBetterPairing(candidate, best, context.sessionsCountMap)) {
+            best = candidate;
         }
-    }
+    });
 
-    dpCache.set(cacheKey, bestResult);
-    return bestResult;
+    context.cache.set(cacheKey, best);
+    return best;
 }
 
 /**
@@ -438,32 +499,62 @@ function findOptimalPairsWithCaching<T extends BaseTeamMember>(
 export const generatePairProgrammingSessions = <T extends BaseTeamMember, P extends BasePairSession<T>>(
     availableTeamMembers: T[],
     previousSessions: P[],
-): Pair<T>[] => {
-    // Create a map to count occurrences of each pair in previous sessions
-    const pairsCountMap = createPairsCountMap<T, P>(previousSessions);
+): Pair<T>[] => findOptimalPairs(availableTeamMembers, {
+    pairsCountMap: createPairsCountMap<T, P>(previousSessions),
+    sessionsCountMap: createSessionsCountMap<T, P>(previousSessions),
+    cache: new Map(),
+}).pairs;
 
-    // Generate all possible unique pairs from available team members
-    const allPairs = generateAllUniquePairs(availableTeamMembers);
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-    // Find optimal pairings using a dynamic programming approach with caching
-    const optimalPairsResult = findOptimalPairsWithCaching<T>(allPairs, pairsCountMap);
-    return optimalPairsResult.pairs;
+/**
+ * Whether a Notion date value is at or before `now`.
+ * A date-only value is compared as a calendar date in the local time zone.
+ * @param value
+ * @param now
+ */
+const isOnOrBefore = (value: string, now: Date): boolean => (DATE_ONLY_PATTERN.test(value)
+    ? value <= format(now, 'yyyy-MM-dd')
+    : new Date(value) <= now);
+
+/**
+ * Whether a Notion date value is at or after `now`.
+ * A date-only value covers the whole day.
+ * @param value
+ * @param now
+ */
+const isOnOrAfter = (value: string, now: Date): boolean => (DATE_ONLY_PATTERN.test(value)
+    ? value >= format(now, 'yyyy-MM-dd')
+    : new Date(value) >= now);
+
+/**
+ * Whether the vacation covers `now`. Both ends are inclusive.
+ * A single-day vacation covers the whole day, even when entered with a time.
+ * @param vacation
+ * @param now
+ */
+const isOnVacation = (vacation: Vacation, now: Date): boolean => {
+    if (vacation.end === null) {
+        const day = vacation.start.slice(0, 10);
+        return isOnOrBefore(day, now) && isOnOrAfter(day, now);
+    }
+
+    return isOnOrBefore(vacation.start, now) && isOnOrAfter(vacation.end, now);
 };
 
 /**
- * Returns team members who are not on vacation
+ * Returns team members who are not on vacation at `now`
  * @param teamMembers
  * @param vacations
+ * @param now
  */
-const getAvailableTeamMembers = (teamMembers: TeamMember[], vacations: Vacation[]): TeamMember[] => {
-    const currentDate = new Date(); // Assuming we're generating for the current week.
-    const availableTeamMembers = teamMembers.filter((teamMember) => !vacations.some((vacation) => {
-        return vacation.memberId === teamMember.id
-        && currentDate >= new Date(vacation.start)
-        && currentDate <= new Date(vacation.end);
-    }));
-    return availableTeamMembers;
-};
+export const getAvailableTeamMembers = <T extends BaseTeamMember>(
+    teamMembers: T[],
+    vacations: Vacation[],
+    now: Date,
+): T[] => teamMembers.filter((teamMember) => !vacations.some((vacation) => {
+    return vacation.memberId === teamMember.id && isOnVacation(vacation, now);
+}));
 
 /**
  * Builds all possible pairs from the given array of members
@@ -489,6 +580,6 @@ export const getPairs = async (): Promise<Pair<TeamMember>[]> => {
     const vacations = await getVacations();
     const previousPairSessions = await getPreviousPairSessions();
 
-    const availableTeamMembers = getAvailableTeamMembers(teamMembers, vacations);
+    const availableTeamMembers = getAvailableTeamMembers(teamMembers, vacations, new Date());
     return generatePairProgrammingSessions(availableTeamMembers, previousPairSessions);
 };
