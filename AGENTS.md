@@ -16,7 +16,7 @@ The codebase is a small TypeScript CLI-style automation project intended to run 
 - Target Platform: Node.js automation run locally and in GitHub Actions workflows.
 - Project Type: Single-package internal automation script.
 - Performance Goals: N/A; no explicit performance targets are documented.
-- Constraints: Requires `NOTION_API_KEY` and `SLACK_TOKEN`; Notion database IDs and the Slack channel ID are hard-coded in `src/config.ts`; when the available team size is odd, exactly one member sits out: among pairings with the lowest repeat score, the algorithm leaves out the member with the most past sessions (ties broken by the smaller id).
+- Constraints: A real run requires `NOTION_API_KEY` and `SLACK_TOKEN`, a dry run only `NOTION_API_KEY`; Notion database IDs and the Slack channel ID are hard-coded in `src/config.ts`; when the available team size is odd, exactly one member sits out: among pairings with the lowest repeat score, the algorithm leaves out the member with the most past sessions (ties broken by the smaller id).
 - Scale/Scope: Small internal team workflow, not a general-purpose public service.
 
 ## Project Structure
@@ -25,7 +25,7 @@ The codebase is a small TypeScript CLI-style automation project intended to run 
 .
 ├── .github/                         # GitHub Actions configuration
 │   └── workflows/                  # CI and scheduled automation workflows
-├── __test__/                       # Jest unit tests for pairing logic and Slack message formatting
+├── __test__/                       # Jest unit tests for pairing logic, run orchestration, and Slack message formatting
 ├── src/                            # Application source code
 │   ├── config.ts                   # Hard-coded Notion database IDs and Slack channel ID
 │   ├── index.ts                    # Top-level orchestration for fetching, storing, and publishing pairs
@@ -46,7 +46,12 @@ The codebase is a small TypeScript CLI-style automation project intended to run 
 ```bash
 yarn install
 
-# Run the workflow locally; requires a .env file with NOTION_API_KEY and SLACK_TOKEN
+# Print this week's pairs without writing to Notion or posting to Slack;
+# requires a .env file with NOTION_API_KEY
+yarn start --dry-run
+
+# Run the workflow for real: writes to Notion and posts to Slack;
+# requires a .env file with NOTION_API_KEY and SLACK_TOKEN
 yarn start
 
 # Lint and type-check
@@ -72,6 +77,11 @@ Notes:
 - Verify that any new or changed code still follows the Code Guidelines section in this file before considering the task complete.
 - Keep command names and workflow behavior aligned with `.github/workflows/` when editing scripts, CI, or entrypoints.
 - Preserve the required environment-variable interface: use `NOTION_API_KEY` and `SLACK_TOKEN`, and never hard-code secret values in source files or documentation.
+- You MUST check a change against live data with `yarn start --dry-run`. You MUST NOT run
+  `yarn start` without `--dry-run` unless the user asks for a real run: it creates Notion
+  records and posts to the team Slack channel.
+- Keep the rerun guard in `src/index.ts`: a real run MUST do nothing when the integration
+  has already created pair sessions this week.
 - If you change pairing behavior, you MUST verify both even-member and odd-member cases: the repeat score must stay minimal, and with an odd count the member with the most past sessions must sit out.
 
 ## Code Guidelines

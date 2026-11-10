@@ -9,3 +9,11 @@ export type Pair<T extends BaseTeamMember> = [T, T];
 export interface BaseTeamMember {
     id: string,
 }
+
+export interface PairingPlan {
+    pairs: Pair<TeamMember>[];
+    // Available members left without a pair (one member when the available count is odd)
+    unpaired: TeamMember[];
+    // Members skipped because they are on vacation
+    onVacation: TeamMember[];
+}
