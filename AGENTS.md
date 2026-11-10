@@ -72,7 +72,7 @@ Notes:
 - Verify that any new or changed code still follows the Code Guidelines section in this file before considering the task complete.
 - Keep command names and workflow behavior aligned with `.github/workflows/` when editing scripts, CI, or entrypoints.
 - Preserve the required environment-variable interface: use `NOTION_API_KEY` and `SLACK_TOKEN`, and never hard-code secret values in source files or documentation.
-- If you change pairing behavior, you MUST verify both even-member and odd-member cases: the repeat score must stay minimal, and with an odd count the sit-out must rotate by past session count.
+- If you change pairing behavior, you MUST verify both even-member and odd-member cases: the repeat score must stay minimal, and with an odd count the member with the most past sessions must sit out.
 
 ## Code Guidelines
 

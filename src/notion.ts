@@ -174,6 +174,28 @@ function isRichTextProperty(property: any): property is { rich_text: { plain_tex
 }
 
 /**
+ * Maps a team members database page to a team member; blank fields become 'Unknown'
+ * @param page
+ */
+export const parseTeamMember = (page: PageObjectResponse): TeamMember => {
+    const nameProperty = page.properties[TeamMembersColumn.Name];
+    const slackProperty = page.properties[TeamMembersColumn.Slack];
+
+    const name = isTitleProperty(nameProperty) && nameProperty.title.length > 0
+        ? nameProperty.title[0].plain_text
+        : 'Unknown';
+    const slack = isRichTextProperty(slackProperty) && slackProperty.rich_text.length > 0
+        ? slackProperty.rich_text[0].plain_text
+        : 'Unknown';
+
+    return {
+        id: page.id,
+        name,
+        slack,
+    };
+};
+
+/**
  * Returns team members marked as enabled
  */
 const getTeamMembers = async (): Promise<TeamMember[]> => {
@@ -187,23 +209,7 @@ const getTeamMembers = async (): Promise<TeamMember[]> => {
 
     return blocks
         .filter((block): block is PageObjectResponse => block.object === 'page')
-        .map((block) => {
-            const nameProperty = block.properties[TeamMembersColumn.Name];
-            const slackProperty = block.properties[TeamMembersColumn.Slack];
-
-            const name = isTitleProperty(nameProperty) && nameProperty.title.length > 0
-                ? nameProperty.title[0].plain_text
-                : 'Unknown';
-            const slack = isRichTextProperty(slackProperty) && slackProperty.rich_text.length > 0
-                ? slackProperty.rich_text[0].plain_text
-                : 'Unknown';
-
-            return {
-                id: block.id,
-                name,
-                slack,
-            };
-        });
+        .map(parseTeamMember);
 };
 
 export interface Vacation {
@@ -227,6 +233,32 @@ export const buildVacationsFilter = (now: Date): QueryDatabaseParameters['filter
 });
 
 /**
+ * Maps a vacations database page to a vacation
+ * @param page
+ */
+export const parseVacation = (page: PageObjectResponse): Vacation => {
+    const memberIdProperty = page.properties[VacationsColumn.TeamMembers];
+    const dateProperty = page.properties[VacationsColumn.Date];
+
+    const memberId = memberIdProperty?.type === 'relation' && memberIdProperty.relation.length > 0
+        ? memberIdProperty.relation[0].id
+        : 'Unknown';
+    const start = dateProperty?.type === 'date' && dateProperty.date?.start
+        ? dateProperty.date.start
+        : 'Unknown';
+    const end = dateProperty?.type === 'date' && dateProperty.date?.end
+        ? dateProperty.date.end
+        : null;
+
+    return {
+        id: page.id,
+        memberId,
+        start,
+        end,
+    };
+};
+
+/**
  * Returns vacations for the next week
  */
 const getVacations = async (): Promise<Vacation[]> => {
@@ -237,27 +269,7 @@ const getVacations = async (): Promise<Vacation[]> => {
 
     return blocks
         .filter((block: any): block is PageObjectResponse => block.object === 'page')
-        .map((block) => {
-            const memberIdProperty = block.properties[VacationsColumn.TeamMembers];
-            const dateProperty = block.properties[VacationsColumn.Date];
-
-            const memberId = memberIdProperty?.type === 'relation' && memberIdProperty.relation.length > 0
-                ? memberIdProperty.relation[0].id
-                : 'Unknown';
-            const startDate = dateProperty?.type === 'date' && dateProperty.date?.start
-                ? dateProperty.date.start
-                : 'Unknown';
-            const endDate = dateProperty?.type === 'date' && dateProperty.date?.end
-                ? dateProperty.date.end
-                : null;
-
-            return {
-                id: block.id,
-                memberId,
-                start: startDate,
-                end: endDate,
-            };
-        });
+        .map(parseVacation);
 };
 
 interface PairSession {
@@ -400,7 +412,7 @@ interface PairingContext<T extends BaseTeamMember> {
 /**
  * Compares pairings: the lower repeat score wins.
  * On equal scores, the one whose sit-out member had more previous sessions wins, then the one with the smaller id.
- * This rotates who sits out instead of leaving out the same member every week.
+ * This evens out past session counts instead of leaving out the first member every week.
  * @param a
  * @param b
  * @param sessionsCountMap
@@ -517,11 +529,18 @@ const isOnOrAfter = (value: string, now: Date): boolean => (DATE_ONLY_PATTERN.te
 
 /**
  * Whether the vacation covers `now`. Both ends are inclusive.
+ * A single-day vacation covers the whole day, even when entered with a time.
  * @param vacation
  * @param now
  */
-const isOnVacation = (vacation: Vacation, now: Date): boolean => isOnOrBefore(vacation.start, now)
-    && isOnOrAfter(vacation.end ?? vacation.start, now);
+const isOnVacation = (vacation: Vacation, now: Date): boolean => {
+    if (vacation.end === null) {
+        const day = vacation.start.slice(0, 10);
+        return isOnOrBefore(day, now) && isOnOrAfter(day, now);
+    }
+
+    return isOnOrBefore(vacation.start, now) && isOnOrAfter(vacation.end, now);
+};
 
 /**
  * Returns team members who are not on vacation at `now`

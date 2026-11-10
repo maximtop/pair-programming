@@ -1,9 +1,13 @@
+import type { PageObjectResponse } from '@notionhq/client/build/src/api-endpoints';
+
 import {
     buildAllPossiblePairs,
     buildVacationsFilter,
     generatePairProgrammingSessions,
     getAvailableTeamMembers,
     isRetryableNotionError,
+    parseTeamMember,
+    parseVacation,
     withNotionRetry,
 } from '../src/notion';
 
@@ -287,7 +291,10 @@ describe('getAvailableTeamMembers', () => {
         ['range starting today', '2026-11-09', '2026-11-13', false],
         ['range that ended yesterday', '2026-11-02', '2026-11-08', true],
         ['single-day vacation tomorrow', '2026-11-10', null, true],
-    ])('date-only %s', (_, start, end, available) => {
+        ['single-day vacation last week', '2026-11-02', null, true],
+        ['single-day vacation today entered with a time', '2026-11-09T09:00:00.000+02:00', null, false],
+        ['single-day vacation yesterday entered with a time', '2026-11-08T09:00:00.000+02:00', null, true],
+    ])('%s', (_, start, end, available) => {
         const vacations = [{
             id: 'v1', memberId: 'alice', start, end,
         }];
@@ -307,5 +314,57 @@ describe('getAvailableTeamMembers', () => {
 
         expect(getAvailableTeamMembers([alice, bob], vacations, new Date('2026-11-09T05:05:00.000Z')))
             .toEqual(available ? [alice, bob] : [bob]);
+    });
+});
+
+describe('Notion page parsing', () => {
+    // Only the fields the parsers read; the real response has many more
+    const createPage = (properties: Record<string, unknown>): PageObjectResponse => ({
+        id: 'page-1',
+        properties,
+    } as unknown as PageObjectResponse);
+
+    const text = (value: string): { plain_text: string } => ({ plain_text: value });
+
+    it('parses a team member', () => {
+        const page = createPage({
+            Name: { type: 'title', title: [text('Alice')] },
+            Slack: { type: 'rich_text', rich_text: [text('U123')] },
+        });
+
+        expect(parseTeamMember(page)).toEqual({ id: 'page-1', name: 'Alice', slack: 'U123' });
+    });
+
+    it('falls back to Unknown for blank team member fields', () => {
+        const page = createPage({
+            Name: { type: 'title', title: [] },
+            Slack: { type: 'rich_text', rich_text: [] },
+        });
+
+        expect(parseTeamMember(page)).toEqual({ id: 'page-1', name: 'Unknown', slack: 'Unknown' });
+    });
+
+    it('parses a vacation range', () => {
+        const page = createPage({
+            'Team members': { type: 'relation', relation: [{ id: 'alice' }] },
+            Date: { type: 'date', date: { start: '2026-11-02', end: '2026-11-09', time_zone: null } },
+        });
+
+        expect(parseVacation(page)).toEqual({
+            id: 'page-1', memberId: 'alice', start: '2026-11-02', end: '2026-11-09',
+        });
+    });
+
+    it('keeps a single-day vacation without an end and applies it', () => {
+        const page = createPage({
+            'Team members': { type: 'relation', relation: [{ id: 'alice' }] },
+            Date: { type: 'date', date: { start: '2026-11-09', end: null, time_zone: null } },
+        });
+
+        const vacation = parseVacation(page);
+
+        expect(vacation.end).toBeNull();
+        expect(getAvailableTeamMembers([{ id: 'alice' }, { id: 'bob' }], [vacation], new Date(2026, 10, 9, 7, 5)))
+            .toEqual([{ id: 'bob' }]);
     });
 });

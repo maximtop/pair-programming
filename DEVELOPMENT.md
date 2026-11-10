@@ -163,7 +163,7 @@ There is no production build step or output directory in this repository.
 
 - Main pairing logic lives in [src/notion.ts](src/notion.ts).
 - Unit coverage for pairing behavior lives in [__test__/notion.test.ts](__test__/notion.test.ts).
-- If you change pair selection rules, verify both even-member and odd-member scenarios. With an odd count, one teammate sits out; the tests check that the repeat score stays minimal and that the sit-out rotates.
+- If you change pair selection rules, verify both even-member and odd-member scenarios. With an odd count, one teammate sits out; the tests check that the repeat score stays minimal and that the teammate with the most past sessions sits out.
 
 ### Change the Slack message format
 
@@ -203,7 +203,7 @@ The current dependency set uses TypeScript `5.3.2`, while `@typescript-eslint/ty
 
 ### No pairs are created for one teammate
 
-This is expected when the number of available teammates is odd: exactly one person sits out. The algorithm first minimizes repeated pairs, then, among equally good pairings, leaves out the teammate with the most past sessions (ties broken by the smaller Notion page id). Over consecutive weeks this rotates the sit-out instead of leaving out the same person.
+This is expected when the number of available teammates is odd: exactly one person sits out. The algorithm first minimizes repeated pairs, then, among equally good pairings, leaves out the teammate with the most past sessions (ties broken by the smaller Notion page id). This evens out past session counts. Counts cover all history, so after a roster change the same person can sit out several weeks in a row until the counts level.
 
 ### Tests pass but the live run is still risky
 
