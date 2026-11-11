@@ -189,7 +189,8 @@ There is no production build step or output directory in this repository.
 
 - Main pairing logic lives in [src/notion.ts](src/notion.ts).
 - Unit coverage for pairing behavior lives in [__test__/notion.test.ts](__test__/notion.test.ts).
-- If you change pair selection rules, verify both even-member and odd-member scenarios. With an odd count, one teammate sits out; the tests check that the repeat score stays minimal and that the teammate with the most past sessions sits out.
+- A past session counts half as much with every 4 weeks of age (`getSessionWeight` in [src/notion.ts](src/notion.ts)). The repeat score of a pairing is the total weight of the past sessions of its pairs, so the search favors the pairs that have not met for longest. To change how fast history fades, change `HISTORY_HALF_LIFE_WEEKS`.
+- If you change pair selection rules, verify both even-member and odd-member scenarios. With an odd count, one teammate sits out; the tests check that the repeat score stays minimal and that the teammate with the largest total weight of past sessions sits out.
 
 ### Change the Slack message format
 
@@ -229,7 +230,7 @@ The current dependency set uses TypeScript `5.3.2`, while `@typescript-eslint/ty
 
 ### No pairs are created for one teammate
 
-This is expected when the number of available teammates is odd: exactly one person sits out. The algorithm first minimizes repeated pairs, then, among equally good pairings, leaves out the teammate with the most past sessions (ties broken by the smaller Notion page id). This evens out past session counts. Counts cover all history, so after a roster change the same person can sit out several weeks in a row until the counts level.
+This is expected when the number of available teammates is odd: exactly one person sits out. The algorithm first minimizes the repeat score, then, among equally good pairings, leaves out the teammate with the largest total weight of past sessions (ties broken by the smaller Notion page id). The repeat score comes first, so the same person can sit out several weeks in a row: for example, a teammate who has recently paired with everyone else sits out until those sessions fade.
 
 ### The run says pairs are already generated
 

@@ -8,6 +8,7 @@ import {
     generatePairProgrammingSessions,
     getAvailableTeamMembers,
     getIdsCreatedBy,
+    getSessionWeight,
     isRetryableNotionError,
     parseTeamMember,
     parseVacation,
@@ -79,6 +80,7 @@ describe('generatePairProgrammingSessions', () => {
         const previousPairSessions = [
             {
                 id: '1',
+                weight: 1,
                 members: [
                     {
                         id: 'alice',
@@ -90,6 +92,7 @@ describe('generatePairProgrammingSessions', () => {
             },
             {
                 id: '2',
+                weight: 1,
                 members: [
                     {
                         id: 'max',
@@ -102,6 +105,7 @@ describe('generatePairProgrammingSessions', () => {
             },
             {
                 id: '3',
+                weight: 1,
                 members: [
                     {
                         id: 'alice',
@@ -113,6 +117,7 @@ describe('generatePairProgrammingSessions', () => {
             },
             {
                 id: '4',
+                weight: 1,
                 members: [
                     {
                         id: 'bob',
@@ -154,7 +159,7 @@ describe('buildVacationsFilter', () => {
 
 describe('generatePairProgrammingSessions optimality', () => {
     type Member = { id: string };
-    type Session = { id: string, members: Member[] };
+    type Session = { id: string, members: Member[], weight: number };
 
     const pairKey = (a: Member, b: Member): string => [a.id, b.id].sort().join(':');
 
@@ -220,9 +225,9 @@ describe('generatePairProgrammingSessions optimality', () => {
     it('avoids a repeated pair that an earlier search path left behind', () => {
         const [a, b, c, d, e, f] = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => ({ id }));
         const sessions = [
-            { id: '1', members: [d, e] },
-            { id: '2', members: [d, f] },
-            { id: '3', members: [e, f] },
+            { id: '1', members: [d, e], weight: 1 },
+            { id: '2', members: [d, f], weight: 1 },
+            { id: '3', members: [e, f], weight: 1 },
         ];
 
         const pairs = generatePairProgrammingSessions([a, b, c, d, e, f], sessions);
@@ -239,7 +244,7 @@ describe('generatePairProgrammingSessions optimality', () => {
             const sessions: Session[] = Array.from({ length: 25 }, (_, i) => {
                 const a = Math.floor(random() * memberCount);
                 const b = (a + 1 + Math.floor(random() * (memberCount - 1))) % memberCount;
-                return { id: String(i), members: [members[a], members[b]] };
+                return { id: String(i), members: [members[a], members[b]], weight: 1 };
             });
             const counts = countPairs(sessions);
 
@@ -274,7 +279,7 @@ describe('generatePairProgrammingSessions optimality', () => {
             expectValidPairing(pairs, members);
             expect(scorePairs(pairs, countPairs(sessions))).toBe(0);
             sitOuts.push(getSitOut(pairs, members));
-            pairs.forEach((pair) => sessions.push({ id: String(sessions.length), members: pair }));
+            pairs.forEach((pair) => sessions.push({ id: String(sessions.length), members: pair, weight: 1 }));
         }
 
         expect(new Set(sitOuts).size).toBe(memberCount);
@@ -401,6 +406,23 @@ describe('getIdsCreatedBy', () => {
     });
 });
 
+describe('getSessionWeight', () => {
+    // Local-time date, so the test does not depend on the machine's time zone
+    const now = new Date(2026, 10, 9, 7, 5);
+
+    it.each([
+        ['today', '2026-11-09', 1000],
+        ['a week ago', '2026-11-02', 841],
+        ['four weeks ago', '2026-10-12', 500],
+        ['eight weeks ago', '2026-09-14', 250],
+        ['a year ago', '2025-11-10', 0],
+        ['four weeks ago, with a local time', '2026-10-12T12:00:00', 500],
+        ['in the future', '2026-11-16', 1000],
+    ])('weighs a session held %s', (_, date, weight) => {
+        expect(getSessionWeight(date, now)).toBe(weight);
+    });
+});
+
 describe('buildPairingPlan', () => {
     const now = new Date(2026, 10, 9, 7, 5);
     const members = ['a', 'b', 'c', 'd', 'e'].map((id) => ({ id, name: id.toUpperCase(), slack: '' }));
@@ -447,13 +469,55 @@ describe('buildPairingPlan', () => {
         expect(plan.onVacation).toEqual([]);
     });
 
+    it('leaves out the member with the largest weight of past sessions, not the most sessions', () => {
+        const plan = buildPairingPlan({
+            teamMembers: members,
+            vacations: [],
+            previousPairSessions: [
+                // `a` has two sessions, but nine months ago
+                { id: 'ac', members: [a, c], date: '2026-02-02' },
+                { id: 'ad', members: [a, d], date: '2026-02-02' },
+                // `b` and `e` have one session each, last week
+                { id: 'be', members: [b, e], date: '2026-11-02' },
+            ],
+            ignoredSessionIds: [],
+            now,
+        });
+
+        expect(plan.unpaired).toEqual([b]);
+    });
+
+    it('prefers the pairs that have not met for longest over the pairs that met least often', () => {
+        const plan = buildPairingPlan({
+            teamMembers: [a, b, c, d],
+            vacations: [],
+            previousPairSessions: [
+                // Three sessions each, nine months ago
+                ...['1', '2', '3'].flatMap((n) => [
+                    { id: `ab-${n}`, members: [a, b], date: '2026-02-02' },
+                    { id: `cd-${n}`, members: [c, d], date: '2026-02-02' },
+                ]),
+                // One session each, two weeks ago
+                { id: 'ad', members: [a, d], date: '2026-10-26' },
+                { id: 'bc', members: [b, c], date: '2026-10-26' },
+                // One session each, last week
+                { id: 'ac', members: [a, c], date: '2026-11-02' },
+                { id: 'bd', members: [b, d], date: '2026-11-02' },
+            ],
+            ignoredSessionIds: [],
+            now,
+        });
+
+        expect(getPairKeys(plan.pairs)).toEqual(['a-b', 'c-d']);
+    });
+
     describe('ignored sessions', () => {
         const teamMembers = [a, b, c, d];
         const previousPairSessions = [
-            { id: 'old-1', members: [a, c] },
-            { id: 'old-2', members: [a, d] },
-            { id: 'this-week-1', members: [a, b] },
-            { id: 'this-week-2', members: [c, d] },
+            { id: 'old-1', members: [a, c], date: '2026-11-02' },
+            { id: 'old-2', members: [a, d], date: '2026-11-02' },
+            { id: 'this-week-1', members: [a, b], date: '2026-11-09' },
+            { id: 'this-week-2', members: [c, d], date: '2026-11-09' },
         ];
 
         it('avoids the pairs of every session in the history', () => {
