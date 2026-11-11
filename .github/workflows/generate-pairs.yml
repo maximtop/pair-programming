@@ -2,7 +2,9 @@ name: Generate pairs
 
 on:
   schedule:
-    - cron: '5 7 * * 1'
+    # GitHub starts scheduled runs hours late (5 to 9 hours in autumn 2026),
+    # so the run is scheduled for the night to land in the morning
+    - cron: '5 3 * * 1'
       timezone: 'Europe/Nicosia'
   workflow_dispatch:
     inputs:
@@ -29,7 +31,7 @@ jobs:
           node-version: '24'
 
       - name: Install dependencies
-        run: yarn install
+        run: yarn install --frozen-lockfile
 
       - name: Run yarn start
         run: yarn start ${{ inputs.dry_run && '--dry-run' || '' }}
