@@ -83,7 +83,7 @@ Notes:
   records and posts to the team Slack channel.
 - Keep the rerun guard in `src/index.ts`: a real run MUST do nothing when the integration
   has already created pair sessions this week.
-- If you change the vacation rule, you MUST keep it based on the whole week, Monday to Friday, not on the day of the run: a member who leaves later in the week must not get a pair.
+- If you change the vacation rule, you MUST keep it based on the whole week, Monday to Friday, not on the day of the run: a member who leaves on Tuesday or Wednesday for the rest of the week must not get a pair.
 - If you change pairing behavior, you MUST verify both even-member and odd-member cases: the repeat score must stay minimal, and with an odd count the member with the largest total weight of past sessions must sit out.
 
 ## Code Guidelines

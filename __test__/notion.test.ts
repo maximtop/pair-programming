@@ -17,10 +17,26 @@ import {
 import type { Vacation } from '../src/notion';
 
 describe('isRetryableNotionError', () => {
-    it('matches transient stream and network errors', () => {
-        expect(isRetryableNotionError({ code: 'ERR_STREAM_PREMATURE_CLOSE' })).toBe(true);
-        expect(isRetryableNotionError({ message: 'Premature close' })).toBe(true);
+    it('matches network errors of built-in fetch, which keeps the code in the cause', () => {
+        const fetchFailed = (code: string): Error => new TypeError('fetch failed', { cause: { code } });
+
+        expect(isRetryableNotionError(fetchFailed('ECONNRESET'))).toBe(true);
+        expect(isRetryableNotionError(fetchFailed('UND_ERR_SOCKET'))).toBe(true);
+        expect(isRetryableNotionError(fetchFailed('ERR_INVALID_URL'))).toBe(false);
+        expect(isRetryableNotionError(new TypeError('fetch failed'))).toBe(false);
+    });
+
+    it('matches a network error code on the error itself', () => {
         expect(isRetryableNotionError({ code: 'ECONNRESET' })).toBe(true);
+    });
+
+    it('matches the request timeout of the Notion client', () => {
+        expect(isRetryableNotionError({ code: 'notionhq_client_request_timeout' })).toBe(true);
+    });
+
+    it('does not match Notion API errors that a retry cannot fix', () => {
+        expect(isRetryableNotionError({ code: 'validation_error', status: 400 })).toBe(false);
+        expect(isRetryableNotionError({ code: 'unauthorized', status: 401 })).toBe(false);
     });
 
     it('matches rate limit and server errors', () => {
@@ -33,7 +49,7 @@ describe('isRetryableNotionError', () => {
 describe('withNotionRetry', () => {
     it('retries retryable failures before resolving', async () => {
         const operation = jest.fn()
-            .mockRejectedValueOnce({ code: 'ERR_STREAM_PREMATURE_CLOSE' })
+            .mockRejectedValueOnce(new TypeError('fetch failed', { cause: { code: 'ECONNRESET' } }))
             .mockResolvedValue('ok');
         const sleep = jest.fn().mockResolvedValue(undefined);
         const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);

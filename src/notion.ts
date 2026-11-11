@@ -32,17 +32,21 @@ const NOTION_QUERY_ATTEMPTS = 4;
 const NOTION_QUERY_RETRY_DELAY_MS = 1000;
 
 const RETRYABLE_NOTION_ERROR_CODES = new Set([
-    'ERR_STREAM_PREMATURE_CLOSE',
     'ECONNRESET',
     'ETIMEDOUT',
     'EAI_AGAIN',
     'UND_ERR_SOCKET',
+    'UND_ERR_CONNECT_TIMEOUT',
+    // The request timeout of the Notion client
+    'notionhq_client_request_timeout',
 ]);
 
 interface ErrorWithDetails {
     code?: string;
     message?: string;
     status?: number;
+    // Built-in fetch rejects with `TypeError: fetch failed` and keeps the network error here
+    cause?: { code?: string };
 }
 
 interface NotionRetryOptions {
@@ -68,8 +72,10 @@ const getNotionErrorDetails = (error: unknown): ErrorWithDetails => {
 const getNotionErrorSummary = (error: unknown): string => {
     const errorDetails = getNotionErrorDetails(error);
 
-    if (errorDetails.code) {
-        return errorDetails.code;
+    const code = errorDetails.code ?? errorDetails.cause?.code;
+
+    if (code) {
+        return code;
     }
 
     if (errorDetails.status) {
@@ -86,15 +92,13 @@ const getNotionErrorSummary = (error: unknown): string => {
 export const isRetryableNotionError = (error: unknown): boolean => {
     const errorDetails = getNotionErrorDetails(error);
 
-    if (errorDetails.code && RETRYABLE_NOTION_ERROR_CODES.has(errorDetails.code)) {
+    const codes = [errorDetails.code, errorDetails.cause?.code];
+
+    if (codes.some((code) => code !== undefined && RETRYABLE_NOTION_ERROR_CODES.has(code))) {
         return true;
     }
 
-    if (errorDetails.status && (errorDetails.status === 429 || errorDetails.status >= 500)) {
-        return true;
-    }
-
-    return errorDetails.message?.includes('Premature close') ?? false;
+    return errorDetails.status !== undefined && (errorDetails.status === 429 || errorDetails.status >= 500);
 };
 
 export const withNotionRetry = async <T>(
