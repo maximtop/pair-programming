@@ -1,26 +1,21 @@
 {
     "compilerOptions": {
-        "moduleResolution": "node",
-        "target": "es2015",
-        "module":"es2015",
-        "lib": ["esnext", "dom"],
+        "target": "es2022",
+        "module": "commonjs",
+        "moduleResolution": "bundler",
+        "lib": ["es2023"],
+        "types": ["node", "jest"],
         "strict": true,
-        "allowSyntheticDefaultImports": true,
-        "experimentalDecorators": true,
-        "emitDecoratorMetadata": true,
-        "resolveJsonModule": true,
         "esModuleInterop": true,
+        "noEmit": true
     },
     "include": [
         "src",
-    ],
-    "exclude": [
-        "node_modules"
+        "__test__",
+        "index.ts",
+        "jest.config.ts"
     ],
     "ts-node": {
-        "swc": true,
-        "compilerOptions": {
-            "module":"CommonJS",
-        }
+        "swc": true
     }
 }
