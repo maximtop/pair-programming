@@ -3,7 +3,7 @@ name: Generate pairs
 on:
   schedule:
     # GitHub starts scheduled runs hours late (5 to 9 hours in autumn 2026),
-    # so the run is scheduled for 05:05 to land before midday
+    # so a 05:05 schedule brings the pairs to Slack around midday
     - cron: '5 5 * * 1'
       timezone: 'Europe/Nicosia'
   workflow_dispatch:
