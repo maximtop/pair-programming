@@ -23,44 +23,36 @@ import {
 
 import 'dotenv/config';
 
-const notionFetch = typeof fetch === 'function'
-    ? async (
-        url: string,
-        init?: { body?: string, headers?: Record<string, string>, method?: string },
-    ): Promise<Response> => fetch(url, {
-        body: init?.body,
-        headers: init?.headers,
-        method: init?.method,
-    })
-    : undefined;
-
 // Initializing a client
 const notion = new Client({
     auth: process.env.NOTION_API_KEY, // or your API key as a string
-    fetch: notionFetch,
 });
 
 const NOTION_QUERY_ATTEMPTS = 4;
 const NOTION_QUERY_RETRY_DELAY_MS = 1000;
 
 const RETRYABLE_NOTION_ERROR_CODES = new Set([
-    'ERR_STREAM_PREMATURE_CLOSE',
     'ECONNRESET',
     'ETIMEDOUT',
     'EAI_AGAIN',
     'UND_ERR_SOCKET',
+    'UND_ERR_CONNECT_TIMEOUT',
+    // The request timeout of the Notion client
+    'notionhq_client_request_timeout',
 ]);
 
 interface ErrorWithDetails {
-    code?: string,
-    message?: string,
-    status?: number,
+    code?: string;
+    message?: string;
+    status?: number;
+    // Built-in fetch rejects with `TypeError: fetch failed` and keeps the network error here
+    cause?: { code?: string };
 }
 
 interface NotionRetryOptions {
-    attempts?: number,
-    getDelayMs?: (attempt: number) => number,
-    sleep?: (delayMs: number) => Promise<void>,
+    attempts?: number;
+    getDelayMs?: (attempt: number) => number;
+    sleep?: (delayMs: number) => Promise<void>;
 }
 
 const sleep = async (delayMs: number): Promise<void> => new Promise((resolve) => {
@@ -80,8 +72,10 @@ const getNotionErrorDetails = (error: unknown): ErrorWithDetails => {
 const getNotionErrorSummary = (error: unknown): string => {
     const errorDetails = getNotionErrorDetails(error);
 
-    if (errorDetails.code) {
-        return errorDetails.code;
+    const code = errorDetails.code ?? errorDetails.cause?.code;
+
+    if (code) {
+        return code;
     }
 
     if (errorDetails.status) {
@@ -98,15 +92,13 @@ const getNotionErrorSummary = (error: unknown): string => {
 export const isRetryableNotionError = (error: unknown): boolean => {
     const errorDetails = getNotionErrorDetails(error);
 
-    if (errorDetails.code && RETRYABLE_NOTION_ERROR_CODES.has(errorDetails.code)) {
+    const codes = [errorDetails.code, errorDetails.cause?.code];
+
+    if (codes.some((code) => code !== undefined && RETRYABLE_NOTION_ERROR_CODES.has(code))) {
         return true;
     }
 
-    if (errorDetails.status && (errorDetails.status === 429 || errorDetails.status >= 500)) {
-        return true;
-    }
-
-    return errorDetails.message?.includes('Premature close') ?? false;
+    return errorDetails.status !== undefined && (errorDetails.status === 429 || errorDetails.status >= 500);
 };
 
 export const withNotionRetry = async <T>(
@@ -163,26 +155,9 @@ const VacationsColumn = {
 
 const PairSessionsColumn = {
     TeamMembers: 'Team members',
-    Projects: 'Projects',
     Date: 'Date',
     Status: 'Status',
 };
-
-/**
- * Type guards to narrow down the property types
- * @param property
- */
-function isTitleProperty(property: any): property is { title: { plain_text: string }[] } {
-    return property && property.type === 'title' && Array.isArray(property.title);
-}
-
-/**
- * Type guards to narrow down the property types
- * @param property
- */
-function isRichTextProperty(property: any): property is { rich_text: { plain_text: string }[] } {
-    return property && property.type === 'rich_text' && Array.isArray(property.rich_text);
-}
 
 /**
  * Maps a team members database page to a team member; blank fields become 'Unknown'
@@ -192,10 +167,10 @@ export const parseTeamMember = (page: PageObjectResponse): TeamMember => {
     const nameProperty = page.properties[TeamMembersColumn.Name];
     const slackProperty = page.properties[TeamMembersColumn.Slack];
 
-    const name = isTitleProperty(nameProperty) && nameProperty.title.length > 0
+    const name = nameProperty?.type === 'title' && nameProperty.title.length > 0
         ? nameProperty.title[0].plain_text
         : 'Unknown';
-    const slack = isRichTextProperty(slackProperty) && slackProperty.rich_text.length > 0
+    const slack = slackProperty?.type === 'rich_text' && slackProperty.rich_text.length > 0
         ? slackProperty.rich_text[0].plain_text
         : 'Unknown';
 
@@ -225,10 +200,10 @@ const getTeamMembers = async (): Promise<TeamMember[]> => {
 
 export interface Vacation {
     id: string;
-    memberId: string,
-    start: string,
+    memberId: string;
+    start: string;
     // Null for a single-day vacation
-    end: string | null,
+    end: string | null;
 }
 
 const VACATIONS_LOOKAHEAD_DAYS = 7;
@@ -236,7 +211,7 @@ const VACATIONS_LOOKAHEAD_DAYS = 7;
 /**
  * Builds the filter for vacations that start before a week from `now`.
  * There is deliberately no lower bound: ongoing vacations must be returned too.
- * `getAvailableTeamMembers` picks the ones that cover the current date.
+ * `getAvailableTeamMembers` counts the days they take from the current week.
  */
 export const buildVacationsFilter = (now: Date): QueryDatabaseParameters['filter'] => ({
     property: 'Date',
@@ -280,16 +255,34 @@ const getVacations = async (now: Date): Promise<Vacation[]> => {
     }, 'Query vacations');
 
     return blocks
-        .filter((block: any): block is PageObjectResponse => block.object === 'page')
+        .filter((block): block is PageObjectResponse => block.object === 'page')
         .map(parseVacation);
 };
 
-interface PairSession {
-    id: string,
-    members: TeamMember[],
-    date: string,
-    projectIds: string[],
+export interface PairSession {
+    id: string;
+    members: BaseTeamMember[];
+    date: string;
 }
+
+/**
+ * Maps a pair sessions database page to a pair session
+ * @param page
+ */
+export const parsePairSession = (page: PageObjectResponse): PairSession => {
+    const membersProperty = page.properties[PairSessionsColumn.TeamMembers];
+    const dateProperty = page.properties[PairSessionsColumn.Date];
+
+    if (membersProperty?.type !== 'relation' || dateProperty?.type !== 'date' || !dateProperty.date) {
+        throw new Error(`Pair session ${page.id} has no "${PairSessionsColumn.TeamMembers}" relation or no date`);
+    }
+
+    return {
+        id: page.id,
+        members: membersProperty.relation.map((member) => ({ id: member.id })),
+        date: dateProperty.date.start,
+    };
+};
 
 /**
  * Returns all previous sessions until `now`
@@ -299,25 +292,16 @@ const getPreviousPairSessions = async (now: Date): Promise<PairSession[]> => {
     const blocks = await queryDatabase({
         database_id: PAIR_SESSIONS_TABLE_ID,
         filter: {
-            property: 'Date',
+            property: PairSessionsColumn.Date,
             date: {
                 before: now.toISOString(),
             },
         },
     }, 'Query previous pair sessions');
 
-    return blocks.map((block: any) => {
-        const memberIds = block.properties[PairSessionsColumn.TeamMembers].relation.map((member: any) => member);
-        const projectIds = block.properties[PairSessionsColumn.Projects].relation.map((proj: any) => proj.id);
-        const date = block.properties[PairSessionsColumn.Date].date.start;
-
-        return {
-            id: block.id,
-            date,
-            members: memberIds,
-            projectIds,
-        };
-    });
+    return blocks
+        .filter((block): block is PageObjectResponse => block.object === 'page')
+        .map(parsePairSession);
 };
 
 /**
@@ -406,11 +390,11 @@ export const getSessionIdsGeneratedThisWeek = async (now: Date): Promise<string[
     );
 };
 
-interface BasePairSession<T> {
-    id: string,
-    members: T[],
+interface WeightedPairSession {
+    id: string;
+    members: BaseTeamMember[];
     // How much the session counts as a repeat; see `getSessionWeight`
-    weight: number,
+    weight: number;
 }
 
 // A session counts half as much with every `HISTORY_HALF_LIFE_WEEKS` weeks of age
@@ -443,25 +427,20 @@ function createPairKey(members: BaseTeamMember[]): string {
  * Creates a map with the total weight of the previous sessions of each pair
  * @param previousSessions
  */
-function createPairWeightsMap<
-    T extends BaseTeamMember,
-    P extends BasePairSession<T>,
->(previousSessions: P[]): Map<string, number> {
-    return previousSessions.reduce((acc, session) => {
+function createPairWeightsMap(previousSessions: WeightedPairSession[]): Map<string, number> {
+    const weights = new Map<string, number>();
+    previousSessions.forEach((session) => {
         const key = createPairKey(session.members);
-        acc.set(key, (acc.get(key) || 0) + session.weight);
-        return acc;
-    }, new Map());
+        weights.set(key, (weights.get(key) || 0) + session.weight);
+    });
+    return weights;
 }
 
 /**
  * Creates a map with the total weight of the previous sessions each member took part in
  * @param previousSessions
  */
-function createMemberWeightsMap<
-    T extends BaseTeamMember,
-    P extends BasePairSession<T>,
->(previousSessions: P[]): Map<string, number> {
+function createMemberWeightsMap(previousSessions: WeightedPairSession[]): Map<string, number> {
     const weights = new Map<string, number>();
     previousSessions.forEach((session) => {
         session.members.forEach((member) => {
@@ -472,16 +451,16 @@ function createMemberWeightsMap<
 }
 
 interface PairingResult<T extends BaseTeamMember> {
-    pairs: Pair<T>[],
-    score: number,
+    pairs: Pair<T>[];
+    score: number;
     // The member left without a pair when the number of members is odd
-    sitOut?: T,
+    sitOut?: T;
 }
 
 interface PairingContext<T extends BaseTeamMember> {
-    pairWeightsMap: Map<string, number>,
-    memberWeightsMap: Map<string, number>,
-    cache: Map<string, PairingResult<T>>,
+    pairWeightsMap: Map<string, number>;
+    memberWeightsMap: Map<string, number>;
+    cache: Map<string, PairingResult<T>>;
 }
 
 /**
@@ -572,54 +551,46 @@ function findOptimalPairs<T extends BaseTeamMember>(
  * @param availableTeamMembers
  * @param previousSessions
  */
-export const generatePairProgrammingSessions = <T extends BaseTeamMember, P extends BasePairSession<T>>(
+export const generatePairProgrammingSessions = <T extends BaseTeamMember>(
     availableTeamMembers: T[],
-    previousSessions: P[],
+    previousSessions: WeightedPairSession[],
 ): Pair<T>[] => findOptimalPairs(availableTeamMembers, {
     pairWeightsMap: createPairWeightsMap(previousSessions),
     memberWeightsMap: createMemberWeightsMap(previousSessions),
     cache: new Map(),
 }).pairs;
 
-const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const WORKING_DAYS_IN_WEEK = 5;
+
+// A member on vacation for at least this many working days of the week gets no pair
+const MIN_VACATION_DAYS_TO_SKIP_WEEK = 3;
 
 /**
- * Whether a Notion date value is at or before `now`.
- * A date-only value is compared as a calendar date in the local time zone.
- * @param value
+ * Returns the working days, Monday to Friday, of the week of `now` as `yyyy-MM-dd` in the local time zone
  * @param now
  */
-const isOnOrBefore = (value: string, now: Date): boolean => (DATE_ONLY_PATTERN.test(value)
-    ? value <= format(now, 'yyyy-MM-dd')
-    : new Date(value) <= now);
-
-/**
- * Whether a Notion date value is at or after `now`.
- * A date-only value covers the whole day.
- * @param value
- * @param now
- */
-const isOnOrAfter = (value: string, now: Date): boolean => (DATE_ONLY_PATTERN.test(value)
-    ? value >= format(now, 'yyyy-MM-dd')
-    : new Date(value) >= now);
-
-/**
- * Whether the vacation covers `now`. Both ends are inclusive.
- * A single-day vacation covers the whole day, even when entered with a time.
- * @param vacation
- * @param now
- */
-const isOnVacation = (vacation: Vacation, now: Date): boolean => {
-    if (vacation.end === null) {
-        const day = vacation.start.slice(0, 10);
-        return isOnOrBefore(day, now) && isOnOrAfter(day, now);
-    }
-
-    return isOnOrBefore(vacation.start, now) && isOnOrAfter(vacation.end, now);
+const getWorkingDays = (now: Date): string[] => {
+    const monday = startOfWeek(now, { weekStartsOn: 1 });
+    return Array.from({ length: WORKING_DAYS_IN_WEEK }, (_, index) => format(addDays(monday, index), 'yyyy-MM-dd'));
 };
 
 /**
- * Returns team members who are not on vacation at `now`
+ * Whether the vacation covers the calendar day. Both ends are inclusive.
+ * Only the date part of a Notion date value counts, so a vacation entered with a time
+ * covers its first and last day in full.
+ * @param vacation
+ * @param day `yyyy-MM-dd`
+ */
+const coversDay = (vacation: Vacation, day: string): boolean => {
+    const start = vacation.start.slice(0, 10);
+    const end = (vacation.end ?? vacation.start).slice(0, 10);
+    return start <= day && day <= end;
+};
+
+/**
+ * Returns team members who get a pair in the week of `now`:
+ * those on vacation for fewer than `MIN_VACATION_DAYS_TO_SKIP_WEEK` of its working days.
+ * The whole week counts, whichever day the run happens on, and the days of several vacations add up.
  * @param teamMembers
  * @param vacations
  * @param now
@@ -628,37 +599,28 @@ export const getAvailableTeamMembers = <T extends BaseTeamMember>(
     teamMembers: T[],
     vacations: Vacation[],
     now: Date,
-): T[] => teamMembers.filter((teamMember) => !vacations.some((vacation) => {
-    return vacation.memberId === teamMember.id && isOnVacation(vacation, now);
-}));
+): T[] => {
+    const workingDays = getWorkingDays(now);
 
-/**
- * Builds all possible pairs from the given array of members
- * @param allMembers
- */
-export const buildAllPossiblePairs = <T>(allMembers: T[]): [T, T][] => {
-    const pairs: [T, T][] = [];
-
-    for (let i = 0; i < allMembers.length; i += 1) {
-        for (let j = i + 1; j < allMembers.length; j += 1) {
-            pairs.push([allMembers[i], allMembers[j]]);
-        }
-    }
-
-    return pairs;
+    return teamMembers.filter((teamMember) => {
+        const memberVacations = vacations.filter((vacation) => vacation.memberId === teamMember.id);
+        const vacationDays = workingDays.filter((day) => memberVacations.some((vacation) => coversDay(vacation, day)));
+        return vacationDays.length < MIN_VACATION_DAYS_TO_SKIP_WEEK;
+    });
 };
 
 interface PairingPlanInput {
-    teamMembers: TeamMember[],
-    vacations: Vacation[],
-    previousPairSessions: Pick<PairSession, 'id' | 'members' | 'date'>[],
+    teamMembers: TeamMember[];
+    vacations: Vacation[];
+    previousPairSessions: PairSession[];
     // Sessions to leave out of the history
-    ignoredSessionIds: string[],
-    now: Date,
+    ignoredSessionIds: string[];
+    now: Date;
 }
 
 /**
- * Builds the plan for the week: the pairs, who is left without a pair and who is on vacation
+ * Builds the plan for the week: the pairs, who is left without a pair
+ * and who gets no pair because of a vacation
  * @param input
  */
 export const buildPairingPlan = (input: PairingPlanInput): PairingPlan => {
