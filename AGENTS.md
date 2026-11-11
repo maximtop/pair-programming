@@ -8,15 +8,15 @@ The codebase is a small TypeScript CLI-style automation project intended to run 
 
 ## Technical Context
 
-- Language/Version: TypeScript `^5.3.2`; CI runs on Node.js `24`; local execution uses `ts-node` with SWC.
+- Language/Version: TypeScript `~6.0.3`; CI runs on Node.js `24`; local execution uses `ts-node` with SWC.
 - Primary Dependencies: `@notionhq/client`, `@slack/web-api`, `date-fns`, `dotenv`.
-- Tooling: Jest `^29`, `@swc/jest`, ESLint with `@typescript-eslint`, `tsc --noEmit`.
+- Tooling: Jest `^30`, `@swc/jest`, ESLint `^10` flat config with `typescript-eslint` and `@stylistic`, `tsc --noEmit`.
 - Storage: Notion databases accessed through the Notion API. There is no local database or persisted application state in the repo.
 - External Services: Slack Web API for publishing the weekly announcement.
 - Target Platform: Node.js automation run locally and in GitHub Actions workflows.
 - Project Type: Single-package internal automation script.
 - Performance Goals: N/A; no explicit performance targets are documented.
-- Constraints: A real run requires `NOTION_API_KEY` and `SLACK_TOKEN`, a dry run only `NOTION_API_KEY`; Notion database IDs and the Slack channel ID are hard-coded in `src/config.ts`; a past session counts half as much with every 4 weeks of age (`getSessionWeight` in `src/notion.ts`), so the repeat score favors the pairs that have not met for longest; when the available team size is odd, exactly one member sits out: among pairings with the lowest repeat score, the algorithm leaves out the member with the largest total weight of past sessions (ties broken by the smaller id).
+- Constraints: A real run requires `NOTION_API_KEY` and `SLACK_TOKEN`, a dry run only `NOTION_API_KEY`; Notion database IDs and the Slack channel ID are hard-coded in `src/config.ts`; a member on vacation for three or more of the five working days of the week gets no pair (`getAvailableTeamMembers` in `src/notion.ts`); a past session counts half as much with every 4 weeks of age (`getSessionWeight` in `src/notion.ts`), so the repeat score favors the pairs that have not met for longest; when the available team size is odd, exactly one member sits out: among pairings with the lowest repeat score, the algorithm leaves out the member with the largest total weight of past sessions (ties broken by the smaller id).
 - Scale/Scope: Small internal team workflow, not a general-purpose public service.
 
 ## Project Structure
@@ -33,12 +33,12 @@ The codebase is a small TypeScript CLI-style automation project intended to run 
 │   ├── slack.ts                    # Slack message building and posting
 │   └── types.ts                    # Shared TypeScript types for team members and pairs
 ├── dev.env                         # Example environment variable template
+├── eslint.config.mjs               # ESLint flat config
 ├── index.ts                        # CLI entrypoint with top-level error handling
 ├── jest.config.ts                  # Jest transform configuration via SWC
 ├── package.json                    # Scripts, dependencies, and package metadata
 ├── README.md                       # Short project description
-├── tsconfig.eslint.json            # ESLint TypeScript project file
-└── tsconfig.json                   # Main TypeScript compiler options
+└── tsconfig.json                   # TypeScript compiler options for sources and tests
 ```
 
 ## Build And Test Commands
@@ -67,7 +67,8 @@ yarn test __test__/notion.test.ts
 Notes:
 
 - There is no dedicated production build script. The project executes directly with `ts-node -r @swc/register`.
-- CI uses Yarn, Node.js 24, `yarn lint`, and `yarn test` in `.github/workflows/`.
+- CI runs `yarn lint` and `yarn test` on pull requests and on pushes to `master` with Yarn and Node.js 24; see `.github/workflows/`.
+- The workflows install with `yarn install --frozen-lockfile`: commit `yarn.lock` together with any change to `package.json`.
 
 ## Contribution Instructions
 
@@ -82,6 +83,7 @@ Notes:
   records and posts to the team Slack channel.
 - Keep the rerun guard in `src/index.ts`: a real run MUST do nothing when the integration
   has already created pair sessions this week.
+- If you change the vacation rule, you MUST keep it based on the whole week, Monday to Friday, not on the day of the run: a member who leaves later in the week must not get a pair.
 - If you change pairing behavior, you MUST verify both even-member and odd-member cases: the repeat score must stay minimal, and with an odd count the member with the largest total weight of past sessions must sit out.
 
 ## Code Guidelines

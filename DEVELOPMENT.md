@@ -65,7 +65,7 @@ yarn start --dry-run
 ```
 
 A dry run reads Notion, prints the pairs, who is left without a pair, and who is
-on vacation, and stops. It does not write to Notion or post to Slack, and it
+skipped because of a vacation, and stops. It does not write to Notion or post to Slack, and it
 needs only `NOTION_API_KEY`.
 
 If the pairs for the current week are already generated, a dry run leaves this
@@ -140,7 +140,8 @@ The repository does not currently document a branch naming convention or pull re
 What is verifiable from the repo today:
 
 - CI runs `yarn lint` and `yarn test` in GitHub Actions.
-- The lint and test workflows are configured on pushes to `master` and via manual dispatch.
+- The lint and test workflows run on pull requests, on pushes to `master`, and via manual dispatch.
+- The workflows install with `yarn install --frozen-lockfile`, so commit `yarn.lock` together with any change to `package.json`.
 - Before opening or updating a pull request, you should have local `yarn lint` and `yarn test` results that match CI expectations.
 
 ### GitHub Actions Node 24 configuration
@@ -164,15 +165,16 @@ Operational caution:
 - A manual run of [generate-pairs.yml](.github/workflows/generate-pairs.yml) performs live writes to Notion and Slack unless you tick its `dry_run` input.
 - With `dry_run` ticked, the workflow runs `yarn start --dry-run` and only prints the pairs to the job log.
 - Run that workflow without `dry_run` only when you are prepared for those external side effects.
+- The schedule is Monday 03:05 in `Europe/Nicosia`. GitHub starts scheduled runs hours late (5 to 9 hours in autumn 2026), so a night schedule brings the pairs to Slack in the morning. Keep the run on Monday: the week of the rerun guard and of the vacation rule starts on Monday.
 - The workflow runs `yarn start` with `TZ=Europe/Nicosia`, so the week starts on Monday in the team’s time zone and dates match a local run. Keep it in step with the `timezone` of the schedule.
 - The workflow’s `concurrency` group makes runs wait for each other. Keep it: the rerun guard reads Notion before writing, so two overlapping runs would both pass it.
 
 ### Code style and tooling
 
-- TypeScript is compiled in strict mode via [tsconfig.json](tsconfig.json).
+- `tsc --noEmit` type-checks the sources and the tests in strict mode via [tsconfig.json](tsconfig.json).
 - Local execution uses `ts-node` with SWC.
 - Jest uses `@swc/jest` through [jest.config.ts](jest.config.ts).
-- ESLint uses `@typescript-eslint` with Airbnb base rules through [.eslintrc.js](.eslintrc.js).
+- ESLint uses the flat config in [eslint.config.mjs](eslint.config.mjs): the recommended `typescript-eslint` rules plus `@stylistic` formatting rules.
 - The current lint rules require explicit function return types and 4-space indentation.
 
 ### Build behavior
@@ -190,6 +192,7 @@ There is no production build step or output directory in this repository.
 - Main pairing logic lives in [src/notion.ts](src/notion.ts).
 - Unit coverage for pairing behavior lives in [__test__/notion.test.ts](__test__/notion.test.ts).
 - A past session counts half as much with every 4 weeks of age (`getSessionWeight` in [src/notion.ts](src/notion.ts)). The repeat score of a pairing is the total weight of the past sessions of its pairs, so the search favors the pairs that have not met for longest. To change how fast history fades, change `HISTORY_HALF_LIFE_WEEKS`.
+- A teammate on vacation for three or more of the five working days of the week, Monday to Friday, gets no pair (`getAvailableTeamMembers` in [src/notion.ts](src/notion.ts)). The whole week counts, whichever day the run happens on, and the days of several vacations add up. To change the threshold, change `MIN_VACATION_DAYS_TO_SKIP_WEEK`.
 - If you change pair selection rules, verify both even-member and odd-member scenarios. With an odd count, one teammate sits out; the tests check that the repeat score stays minimal and that the teammate with the largest total weight of past sessions sits out.
 
 ### Change the Slack message format
@@ -224,13 +227,16 @@ Check that:
 
 This project does not read database IDs or the Slack channel from the environment. Review [src/config.ts](src/config.ts) before running the script.
 
-### `yarn lint` shows a TypeScript support warning from ESLint
-
-The current dependency set uses TypeScript `5.3.2`, while `@typescript-eslint/typescript-estree` warns that its officially supported range is older. In this workspace the lint command still completes successfully, so treat this as a dependency compatibility warning unless linting actually fails.
-
 ### No pairs are created for one teammate
 
 This is expected when the number of available teammates is odd: exactly one person sits out. The algorithm first minimizes the repeat score, then, among equally good pairings, leaves out the teammate with the largest total weight of past sessions (ties broken by the smaller Notion page id). The repeat score comes first, so the same person can sit out several weeks in a row: for example, a teammate who has recently paired with everyone else sits out until those sessions fade.
+
+### A teammate on vacation got a pair
+
+This is expected when the vacation takes one or two working days of the week:
+only a teammate away for three or more working days, Monday to Friday, is
+skipped. If the teammate is away longer, check their record in the Vacations
+database: the `Team members` relation and both ends of `Date`.
 
 ### The run says pairs are already generated
 

@@ -1,7 +1,6 @@
 import type { PageObjectResponse } from '@notionhq/client/build/src/api-endpoints';
 
 import {
-    buildAllPossiblePairs,
     buildCurrentWeekSessionsFilter,
     buildPairingPlan,
     buildVacationsFilter,
@@ -10,10 +9,12 @@ import {
     getIdsCreatedBy,
     getSessionWeight,
     isRetryableNotionError,
+    parsePairSession,
     parseTeamMember,
     parseVacation,
     withNotionRetry,
 } from '../src/notion';
+import type { Vacation } from '../src/notion';
 
 describe('isRetryableNotionError', () => {
     it('matches transient stream and network errors', () => {
@@ -48,16 +49,6 @@ describe('withNotionRetry', () => {
 
         expect(operation).toHaveBeenCalledTimes(2);
         expect(sleep).toHaveBeenCalledWith(0);
-    });
-});
-
-describe('buildAllPossiblePairs', () => {
-    it('builds pairs', () => {
-        const maxim = { name: 'maxim' };
-        const vladimir = { name: 'vladimir' };
-        const dmitriy = { name: 'dmitriy' };
-        expect(buildAllPossiblePairs([maxim, vladimir, dmitriy]))
-            .toEqual([[maxim, vladimir], [maxim, dmitriy], [vladimir, dmitriy]]);
     });
 });
 
@@ -159,7 +150,7 @@ describe('buildVacationsFilter', () => {
 
 describe('generatePairProgrammingSessions optimality', () => {
     type Member = { id: string };
-    type Session = { id: string, members: Member[], weight: number };
+    type Session = { id: string; members: Member[]; weight: number };
 
     const pairKey = (a: Member, b: Member): string => [a.id, b.id].sort().join(':');
 
@@ -290,38 +281,61 @@ describe('getAvailableTeamMembers', () => {
     const alice = { id: 'alice' };
     const bob = { id: 'bob' };
 
-    // Monday 2026-11-09 07:05 in the local time zone
+    // Monday 2026-11-09 07:05 in the local time zone; the working days of the week are November 9 to 13
     const mondayMorning = new Date(2026, 10, 9, 7, 5);
 
-    it.each([
-        ['single-day vacation today', '2026-11-09', null, false],
-        ['range ending today', '2026-11-02', '2026-11-09', false],
-        ['range starting today', '2026-11-09', '2026-11-13', false],
-        ['range that ended yesterday', '2026-11-02', '2026-11-08', true],
-        ['single-day vacation tomorrow', '2026-11-10', null, true],
-        ['single-day vacation last week', '2026-11-02', null, true],
-        ['single-day vacation today entered with a time', '2026-11-09T09:00:00.000+02:00', null, false],
-        ['single-day vacation yesterday entered with a time', '2026-11-08T09:00:00.000+02:00', null, true],
-    ])('%s', (_, start, end, available) => {
-        const vacations = [{
-            id: 'v1', memberId: 'alice', start, end,
-        }];
-
-        expect(getAvailableTeamMembers([alice, bob], vacations, mondayMorning))
-            .toEqual(available ? [alice, bob] : [bob]);
+    const vacation = (start: string, end: string | null, memberId = 'alice'): Vacation => ({
+        id: `${memberId}-${start}`, memberId, start, end,
     });
 
     it.each([
-        ['covering now', '2026-11-09T00:00:00.000Z', '2026-11-09T12:00:00.000Z', false],
-        ['ended before now', '2026-11-08T09:00:00.000Z', '2026-11-09T05:00:00.000Z', true],
-        ['starting after now', '2026-11-09T08:05:00.000+02:00', '2026-11-09T18:00:00.000+02:00', true],
-    ])('datetime range %s', (_, start, end, available) => {
-        const vacations = [{
-            id: 'v1', memberId: 'alice', start, end,
-        }];
-
-        expect(getAvailableTeamMembers([alice, bob], vacations, new Date('2026-11-09T05:05:00.000Z')))
+        ['the whole week', '2026-11-09', '2026-11-13', false],
+        ['a range longer than the week', '2026-11-02', '2026-11-20', false],
+        ['Tuesday to Friday', '2026-11-10', '2026-11-13', false],
+        ['Wednesday to Friday', '2026-11-11', '2026-11-13', false],
+        ['Monday to Wednesday', '2026-11-09', '2026-11-11', false],
+        ['Wednesday into the next week', '2026-11-11', '2026-11-20', false],
+        ['Thursday to Friday', '2026-11-12', '2026-11-13', true],
+        ['Monday to Tuesday', '2026-11-09', '2026-11-10', true],
+        ['a range from last week ending on Tuesday', '2026-11-02', '2026-11-10', true],
+        ['a single day', '2026-11-09', null, true],
+        ['Thursday to Sunday', '2026-11-12', '2026-11-15', true],
+        ['the weekend only', '2026-11-14', '2026-11-15', true],
+        ['a range that ended last Sunday', '2026-11-02', '2026-11-08', true],
+        ['a range starting next Monday', '2026-11-16', '2026-11-20', true],
+        ['Wednesday to Friday, with times', '2026-11-11T09:00:00.000+02:00', '2026-11-13T18:00:00.000+02:00', false],
+        ['Thursday to Friday, with times', '2026-11-12T09:00:00.000+02:00', '2026-11-13T18:00:00.000+02:00', true],
+    ])('vacation for %s', (_, start, end, available) => {
+        expect(getAvailableTeamMembers([alice, bob], [vacation(start, end)], mondayMorning))
             .toEqual(available ? [alice, bob] : [bob]);
+    });
+
+    it('adds up the days of several vacations', () => {
+        const vacations = [vacation('2026-11-09', null), vacation('2026-11-12', '2026-11-13')];
+
+        expect(getAvailableTeamMembers([alice, bob], vacations, mondayMorning)).toEqual([bob]);
+    });
+
+    it('counts a day covered by two vacations once', () => {
+        const vacations = [vacation('2026-11-09', '2026-11-10'), vacation('2026-11-10', null)];
+
+        expect(getAvailableTeamMembers([alice, bob], vacations, mondayMorning)).toEqual([alice, bob]);
+    });
+
+    it('counts only the vacations of the member', () => {
+        const vacations = [vacation('2026-11-09', '2026-11-10'), vacation('2026-11-11', '2026-11-13', 'bob')];
+
+        expect(getAvailableTeamMembers([alice, bob], vacations, mondayMorning)).toEqual([alice]);
+    });
+
+    it.each([
+        ['Monday', new Date(2026, 10, 9, 7, 5)],
+        ['Thursday', new Date(2026, 10, 12, 16, 45)],
+        ['Sunday', new Date(2026, 10, 15, 23, 59)],
+    ])('counts the whole week when run on %s', (_, now) => {
+        expect(getAvailableTeamMembers([alice, bob], [vacation('2026-11-09', '2026-11-11')], now)).toEqual([bob]);
+        expect(getAvailableTeamMembers([alice, bob], [vacation('2026-11-09', '2026-11-10')], now))
+            .toEqual([alice, bob]);
     });
 });
 
@@ -363,16 +377,34 @@ describe('Notion page parsing', () => {
         });
     });
 
-    it('keeps a single-day vacation without an end and applies it', () => {
+    it('parses a pair session', () => {
         const page = createPage({
-            'Team members': { type: 'relation', relation: [{ id: 'alice' }] },
-            Date: { type: 'date', date: { start: '2026-11-09', end: null, time_zone: null } },
+            'Team members': { type: 'relation', relation: [{ id: 'alice' }, { id: 'bob' }] },
+            Date: { type: 'date', date: { start: '2026-11-02', end: null, time_zone: null } },
         });
 
-        const vacation = parseVacation(page);
+        expect(parsePairSession(page)).toEqual({
+            id: 'page-1', members: [{ id: 'alice' }, { id: 'bob' }], date: '2026-11-02',
+        });
+    });
 
-        expect(vacation.end).toBeNull();
-        expect(getAvailableTeamMembers([{ id: 'alice' }, { id: 'bob' }], [vacation], new Date(2026, 10, 9, 7, 5)))
+    it('fails on a pair session without a date', () => {
+        const page = createPage({
+            'Team members': { type: 'relation', relation: [{ id: 'alice' }, { id: 'bob' }] },
+            Date: { type: 'date', date: null },
+        });
+
+        expect(() => parsePairSession(page)).toThrow('Pair session page-1 has no "Team members" relation or no date');
+    });
+
+    it('keeps single-day vacations without an end and applies them', () => {
+        const vacations = ['2026-11-09', '2026-11-11', '2026-11-13'].map((start) => parseVacation(createPage({
+            'Team members': { type: 'relation', relation: [{ id: 'alice' }] },
+            Date: { type: 'date', date: { start, end: null, time_zone: null } },
+        })));
+
+        expect(vacations.map((vacation) => vacation.end)).toEqual([null, null, null]);
+        expect(getAvailableTeamMembers([{ id: 'alice' }, { id: 'bob' }], vacations, new Date(2026, 10, 9, 7, 5)))
             .toEqual([{ id: 'bob' }]);
     });
 });
