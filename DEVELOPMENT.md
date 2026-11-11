@@ -165,7 +165,7 @@ Operational caution:
 - A manual run of [generate-pairs.yml](.github/workflows/generate-pairs.yml) performs live writes to Notion and Slack unless you tick its `dry_run` input.
 - With `dry_run` ticked, the workflow runs `yarn start --dry-run` and only prints the pairs to the job log.
 - Run that workflow without `dry_run` only when you are prepared for those external side effects.
-- The schedule is Monday 03:05 in `Europe/Nicosia`. GitHub starts scheduled runs hours late (5 to 9 hours in autumn 2026), so a night schedule brings the pairs to Slack in the morning. Keep the run on Monday: the week of the rerun guard and of the vacation rule starts on Monday.
+- The schedule is Monday 05:05 in `Europe/Nicosia`. GitHub starts scheduled runs hours late (5 to 9 hours in autumn 2026), so the early schedule brings the pairs to Slack around midday instead of the afternoon. Keep the run on Monday: the week of the rerun guard and of the vacation rule starts on Monday.
 - The workflow runs `yarn start` with `TZ=Europe/Nicosia`, so the week starts on Monday in the team’s time zone and dates match a local run. Keep it in step with the `timezone` of the schedule.
 - The workflow’s `concurrency` group makes runs wait for each other. Keep it: the rerun guard reads Notion before writing, so two overlapping runs would both pass it.
 
